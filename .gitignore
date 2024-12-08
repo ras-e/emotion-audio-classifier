@@ -1,0 +1,6 @@
+*/__pycache__
+*.DS_Store
+dataset/Audio_Speech_Actors_01-24
+dataset/emotions
+/preprocessed
+/model
