@@ -3,7 +3,10 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from sklearn.metrics import precision_score, recall_score, f1_score
+import logging
 
+# Configure logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 def run_epoch(model, dataloader, criterion, optimizer, device, phase="train"):
     """
@@ -31,7 +34,7 @@ def run_epoch(model, dataloader, criterion, optimizer, device, phase="train"):
     all_preds = []
     all_labels = []
 
-    for inputs, labels in dataloader:
+    for batch_idx, (inputs, labels) in enumerate(dataloader):
         inputs, labels = inputs.to(device), labels.to(device)
 
         # Forward pass
@@ -49,6 +52,8 @@ def run_epoch(model, dataloader, criterion, optimizer, device, phase="train"):
         _, preds = torch.max(outputs, 1)
         correct += (preds == labels).sum().item()
         total += labels.size(0)
+
+        logging.info(f"[{phase.upper()}] Batch {batch_idx + 1}/{len(dataloader)}: Loss = {loss.item():.4f}")
 
         # Store predictions and labels for additional metrics
         all_preds.extend(preds.cpu().numpy())
@@ -68,7 +73,7 @@ def run_epoch(model, dataloader, criterion, optimizer, device, phase="train"):
 
 
 def train_model(
-    model, train_loader, val_loader, criterion, optimizer, device, num_epochs=10, save_path="saved_model.pth", early_stopping_patience=3
+    model, train_loader, val_loader, criterion, optimizer, device, num_epochs=1, save_path="saved_model.pth", early_stopping_patience=3
 ):
     """
     Train the CNN model with training and validation data.
@@ -90,12 +95,17 @@ def train_model(
     best_val_loss = float("inf")
     epochs_without_improvement = 0
 
+    # Learning rate scheduler
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.1, patience=2)
+
     for epoch in range(num_epochs):
         # Run training for one epoch
         train_loss, train_accuracy, _, _, _ = run_epoch(model, train_loader, criterion, optimizer, device, phase="train")
+        logging.info(f"Epoch {epoch+1}/{num_epochs}: Train Loss = {train_loss:.4f}, Accuracy = {train_accuracy:.4f}")
 
         # Run validation for one epoch
         val_loss, val_accuracy, val_precision, val_recall, val_f1 = run_epoch(model, val_loader, criterion, optimizer, device, phase="validate")
+        logging.info(f"Validation Loss = {val_loss:.4f}, Accuracy = {val_accuracy:.4f}")
 
         # Print epoch results
         print(
@@ -109,15 +119,20 @@ def train_model(
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             torch.save(model.state_dict(), save_path)
-            print(f"Model saved to {save_path}")
+            logging.info(f"Model saved to {save_path}")
             epochs_without_improvement = 0  # Reset counter
         else:
             epochs_without_improvement += 1
-            print(f"No improvement in validation loss for {epochs_without_improvement} epoch(s).")
+            logging.info(f"No improvement in validation loss for {epochs_without_improvement} epoch(s).")
+
+        # Step the scheduler and log the learning rate
+        scheduler.step(val_loss)
+        current_lr = scheduler.optimizer.param_groups[0]["lr"]
+        logging.info(f"Learning Rate adjusted to: {current_lr:.6f}")
 
         # Early stopping check
         if epochs_without_improvement >= early_stopping_patience:
-            print("Early stopping triggered. Training terminated.")
+            logging.info("Early stopping triggered. Training terminated.")
             break
 
     return model
