@@ -2,6 +2,7 @@ import torch
 from sklearn.metrics import classification_report, confusion_matrix, roc_curve, auc
 import seaborn as sns
 import matplotlib.pyplot as plt
+import logging
 
 
 def evaluate_model(model, dataloader, device, classes):
@@ -15,8 +16,9 @@ def evaluate_model(model, dataloader, device, classes):
         classes (list): List of class names (emotion labels).
 
     Returns:
-        dict: Evaluation metrics (accuracy, precision, recall, F1-score).
+        dict: Evaluation metrics (accuracy, precision, recall, F1-score, AUC).
     """
+    logging.info("Starting evaluation...")
     model.to(device)
     model.eval()
 
@@ -45,13 +47,30 @@ def evaluate_model(model, dataloader, device, classes):
         if cls not in report:
             report[cls] = {"precision": 0.0, "recall": 0.0, "f1-score": 0.0, "support": 0}
 
+    logging.info("Evaluation completed. Generating metrics and plots...")
     print("Classification Report:")
     print(classification_report(all_labels, all_preds, target_names=class_names))
 
     # Generate confusion matrix
     cm = confusion_matrix(all_labels, all_preds)
+    plot_confusion_matrix(cm, class_names)
 
-  # Plot confusion matrix
+    # Calculate and plot ROC and AUC for each class
+    roc_auc = plot_roc_curves(all_labels, all_preds, class_names)
+
+    return {
+        "accuracy": accuracy,
+        "precision": report["macro avg"]["precision"],
+        "recall": report["macro avg"]["recall"],
+        "f1": report["macro avg"]["f1-score"],
+        "roc_auc": roc_auc,
+    }
+
+
+def plot_confusion_matrix(cm, class_names):
+    """
+    Plot the confusion matrix.
+    """
     plt.figure(figsize=(8, 6))
     sns.heatmap(cm, annot=True, fmt="d", xticklabels=class_names, yticklabels=class_names, cmap="Blues")
     plt.title("Confusion Matrix")
@@ -59,7 +78,11 @@ def evaluate_model(model, dataloader, device, classes):
     plt.ylabel("True")
     plt.show()
 
-  # Calculate ROC and AUC for each class
+
+def plot_roc_curves(all_labels, all_preds, class_names):
+    """
+    Plot ROC curves and calculate AUC for each class.
+    """
     fpr, tpr, roc_auc = {}, {}, {}
     for i, cls in enumerate(class_names):
         labels_bin = [1 if label == i else 0 for label in all_labels]
@@ -70,7 +93,6 @@ def evaluate_model(model, dataloader, device, classes):
         else:
             fpr[i], tpr[i], roc_auc[i] = [0], [0], 0.0
 
-    # Plot ROC curves
     plt.figure(figsize=(10, 8))
     for i, cls in enumerate(class_names):
         if roc_auc[i] > 0:  # Plot only valid ROC curves
@@ -82,11 +104,4 @@ def evaluate_model(model, dataloader, device, classes):
     plt.legend(loc="lower right")
     plt.show()
 
-
-    return {
-        "accuracy": accuracy,
-        "precision": {cls: report[cls]["precision"] for cls in class_names},
-        "recall": {cls: report[cls]["recall"] for cls in class_names},
-        "f1_score": {cls: report[cls]["f1-score"] for cls in class_names},
-        "roc_auc": roc_auc,
-    }
+    return roc_auc

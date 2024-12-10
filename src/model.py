@@ -49,12 +49,16 @@ class EmotionCNN(nn.Module):
         return x
 
 
-def initialize_model(num_classes, device, learning_rate=0.00001, weight_decay=1e-6):
-    """
-    Initializes the model, optimizer, and loss function.
-    """
-    model = EmotionCNN(num_classes)
-    model.to(device)
-    criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.RMSprop(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
-    return model, criterion, optimizer
+def initialize_model(num_classes, device):
+    model = EmotionCNN(num_classes).to(device)
+    return model
+
+def initialize_criterion():
+    return nn.CrossEntropyLoss()
+
+def initialize_optimizer(model, learning_rate=0.00001, weight_decay=1e-6):
+    return torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+
+
+
+
