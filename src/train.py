@@ -80,7 +80,7 @@ def configure_scheduler(optimizer):
 
 
 def train_model_kfold(
-    model_cls, dataset, device, scheduler_fn, n_splits=2, num_epochs=1, batch_size=32
+    model_cls, dataset, device, scheduler_fn, n_splits=10, num_epochs=5, batch_size=32
 ):
     """
     Train the CNN model using Stratified K-Fold Cross-Validation.

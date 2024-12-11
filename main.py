@@ -1,7 +1,7 @@
 import os
 import logging
 import torch
-from src.dataset import MFCCDataset
+from dataset2 import MFCCDataset
 from src.train import train_model_kfold, log_kfold_results, configure_scheduler
 from src.model import initialize_model, initialize_criterion, initialize_optimizer
 from src.evaluation import evaluate_model
@@ -18,10 +18,10 @@ def main():
     os.makedirs(save_dir, exist_ok=True)  # Ensure the model directory exists
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     batch_size = 32
-    num_epochs = 1
-    n_splits = 2  # Number of folds for cross-validation
+    num_epochs = 5
+    n_splits = 10  # Number of folds for cross-validation
     test_split_ratio = 0.2  # Fraction of data reserved for the test set
-    learning_rate = 0.00001
+    learning_rate = 0.001
     weight_decay = 1e-6
 
     # Logging setup

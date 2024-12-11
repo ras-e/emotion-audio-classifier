@@ -1,5 +1,5 @@
 import os
-from src.dataset import SpectrogramDataset
+from dataset2 import SpectrogramDataset
 from src.train import train_model
 from src.evaluation import evaluate_model
 from src.model import EmotionCNN
