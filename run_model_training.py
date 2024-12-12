@@ -7,10 +7,9 @@ from torch.utils.data import DataLoader
 from sklearn.model_selection import StratifiedKFold
 from src.dataset import MFCCDataset
 from src.train import run_epoch
-from model import initialize_model, initialize_criterion, initialize_optimizer
+from src.model import initialize_model, initialize_criterion, initialize_optimizer
 from src.evaluation import evaluate_model
 from time import time
-from datetime import timedelta
 
 def train_model(model, train_loader, val_loader, criterion, optimizer, device, fold, classes, num_epochs=10, total_folds=None, global_start_time=None):
     best_val_loss = float('inf')
@@ -86,8 +85,8 @@ def main():
     os.makedirs(save_dir, exist_ok=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     batch_size = 32
-    num_epochs = 50
-    n_splits = 5
+    num_epochs = 1
+    n_splits = 2
     test_split_ratio = 0.2
     learning_rate = 0.0001
     weight_decay = 1e-4
