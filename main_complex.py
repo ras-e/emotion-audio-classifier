@@ -85,8 +85,8 @@ def main():
     os.makedirs(save_dir, exist_ok=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     batch_size = 32
-    num_epochs = 10
-    n_splits = 2
+    num_epochs = 50
+    n_splits = 5
     test_split_ratio = 0.2
     learning_rate = 0.0001
     weight_decay = 1e-4
