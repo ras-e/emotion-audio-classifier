@@ -26,7 +26,7 @@ def evaluate_model(model, dataloader, device, classes, save_dir="./plots_results
 
     all_preds = []
     all_labels = []
-    class_names = ["_".join(cls) for cls in classes]
+    class_names = classes  # Use emotion labels directly
 
     os.makedirs(save_dir, exist_ok=True)
 

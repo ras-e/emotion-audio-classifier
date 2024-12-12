@@ -28,18 +28,15 @@ def extract_zip(zip_path, extract_to):
         zip_ref.extractall(extract_to)
     logging.info(f"Extracted {zip_path} to {extract_to}")
 
-def reorganize_dataset(extracted_dir, output_dir, organize_by=["emotion"]):
+def reorganize_dataset(extracted_dir, output_dir):
     """
-    Reorganize dataset into subdirectories based on identifiers.
+    Reorganize dataset into subdirectories based on emotions only.
     Args:
         extracted_dir (str): Path to the original dataset (actor-based folders).
         output_dir (str): Path to the reorganized dataset.
-        organize_by (list): Identifiers to organize by, e.g., ["emotion", "gender"].
     """
-
-    processed_count = 0  # Track the number of successfully processed files
-    skipped_count = 0  # Track the number of skipped files
-
+    processed_count = 0
+    skipped_count = 0
 
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
@@ -49,28 +46,19 @@ def reorganize_dataset(extracted_dir, output_dir, organize_by=["emotion"]):
         for file in files:
             if file.endswith(".wav"):
                 parts = file.split("-")
-
-                # Extract identifiers
                 emotion_id = parts[2]
-                actor_id = parts[6].split(".")[0]
 
-                # Define labels
+                # Get emotion label only
                 emotion_label = EMOTION_MAP.get(emotion_id)
-                gender_label = "male" if int(actor_id) % 2 != 0 else "female"
 
                 # Skip files with invalid identifiers
                 if emotion_label is None:
                     logging.warning(f"Skipping file {file} due to missing emotion_id {emotion_id}.")
                     skipped_count += 1
                     continue
-                # Build subdirectory path
-                subdirs = []
-                if "emotion" in organize_by:
-                    subdirs.append(emotion_label)
-                if "gender" in organize_by:
-                    subdirs.append(gender_label)
 
-                dest_dir = os.path.join(output_dir, *subdirs)
+                # Create emotion directory
+                dest_dir = os.path.join(output_dir, emotion_label)
                 os.makedirs(dest_dir, exist_ok=True)
 
                 # Copy the file to the directory
@@ -80,10 +68,8 @@ def reorganize_dataset(extracted_dir, output_dir, organize_by=["emotion"]):
                 logging.info(f"Copied {file} to {dest_dir}")
                 processed_count += 1
     
-    # Summary logs
     logging.info(f"Total files successfully processed: {processed_count}")
     logging.info(f"Total files skipped: {skipped_count}")
-
 
 if __name__ == "__main__":
     zip_file_path = "./dataset/Audio_Speech_Actors_01-24.zip"  # Path to the zip file
@@ -93,4 +79,5 @@ if __name__ == "__main__":
     if not os.path.exists(extracted_dir):
         extract_zip(zip_file_path, extracted_dir)
 
-    reorganize_dataset(extracted_dir, output_dir, organize_by=["emotion", "gender"])
+    # Organize by emotion only, without gender
+    reorganize_dataset(extracted_dir, output_dir)

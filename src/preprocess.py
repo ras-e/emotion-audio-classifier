@@ -5,66 +5,159 @@ import librosa.display
 import matplotlib.pyplot as plt
 import logging
 import random
+import torch
+import torchaudio  # Use torchaudio for efficient audio processing
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-
 # Augmentation functions
 def add_noise(audio, noise_level=0.005):
     """Add random noise to the audio signal."""
-    try:
-        noise = np.random.randn(len(audio))
-        return audio + noise_level * noise
-    except Exception as e:
-        logging.error(f"Error in adding noise: {e}")
-        return audio
-
+    noise = np.random.randn(len(audio))
+    return audio + noise_level * noise
 
 def time_stretch(audio, rate=1.0):
     """Apply time stretching to the audio signal."""
-    try:
-        return librosa.effects.time_stretch(y=audio, rate=rate)
-    except Exception as e:
-        logging.error(f"Error in time stretching: {e}")
-        return audio
-
+    return librosa.effects.time_stretch(y=audio, rate=rate)
 
 def pitch_shift(audio, sr, n_steps=0):
     """Shift the pitch of the audio signal."""
-    try:
-        return librosa.effects.pitch_shift(audio, sr=sr, n_steps=n_steps)
-    except Exception as e:
-        logging.error(f"Error in pitch shifting: {e}")
-        return audio
+    return librosa.effects.pitch_shift(audio, sr=sr, n_steps=n_steps)
 
-
-def apply_augmentation(audio, sr, augmentations=None):
-    """Randomly apply one of the augmentation techniques."""
-    augmentations = augmentations or [
-        (add_noise, {"noise_level": 0.005}),
-        (time_stretch, {"rate": random.uniform(0.8, 1.2)}),
-        (pitch_shift, {"sr": sr, "n_steps": random.randint(-2, 2)})
+def augment_audio(audio, sr):
+    """More robust augmentation pipeline"""
+    augmentations = [
+        lambda x: add_noise(x, noise_level=np.random.uniform(0.001, 0.01)),
+        lambda x: time_stretch(x, rate=np.random.uniform(0.8, 1.2)),
+        lambda x: pitch_shift(x, sr=sr, n_steps=np.random.randint(-4, 4)),
+        lambda x: librosa.effects.harmonic(x),
+        lambda x: librosa.effects.percussive(x)
     ]
-    try:
-        augmentation_func, params = random.choice(augmentations)
-        return augmentation_func(audio, **params)
-    except Exception as e:
-        logging.error(f"Error applying augmentation: {e}")
-        return audio
-
+    for aug in augmentations:
+        if np.random.random() < 0.5:
+            audio = aug(audio)
+    return audio
 
 # Preprocess audio
 def preprocess_audio(file_path, sr=16000, augment=False):
     """Load and preprocess an audio file. Optionally apply augmentation."""
-    try:
-        audio, _ = librosa.load(file_path, sr=sr, mono=True)
-        audio = librosa.util.normalize(audio)
-        audio = librosa.effects.trim(audio)[0]
-        return apply_augmentation(audio, sr) if augment else audio
-    except Exception as e:
-        logging.error(f"Error processing audio file {file_path}: {e}")
-        return None
+    audio, _ = torchaudio.load(file_path)
+    audio = audio.mean(dim=0)  # Convert to mono
+    audio = audio.numpy()
+    audio = librosa.util.normalize(audio)
+    audio, _ = librosa.effects.trim(audio)
+    
+    max_duration = 5  # seconds
+    max_length = int(sr * max_duration)
+    if len(audio) > max_length:
+        audio = audio[:max_length]
+    else:
+        audio = np.pad(audio, (0, max_length - len(audio)), 'constant')
+    
+    if augment:
+        audio = augment_audio(audio, sr)
+    return audio
+
+def extract_mfcc(audio, sr=16000, n_mfcc=40):
+    """Extract MFCC features from audio."""
+    mfccs = librosa.feature.mfcc(y=audio, sr=sr, n_mfcc=n_mfcc)
+    mfccs = np.mean(mfccs, axis=1)  # Average over time to get (40,) shape
+    mfccs = (mfccs - np.mean(mfccs)) / (np.std(mfccs) + 1e-8)  # Normalize
+    return mfccs
+
+def preprocess_and_save_all(input_dir, output_dir, plot_emotion=None, sr=16000, n_mfcc=40, augment=False):
+    """Preprocess all audio files, extract MFCC features, and save them."""
+    input_path = Path(input_dir)
+    output_path = Path(output_dir)
+    plot_done = False
+    processed_count = 0
+    skipped_count = 0
+
+    logging.info("Starting preprocessing and saving process...")
+    logging.info(f"Input directory: {input_dir}")
+    logging.info(f"Output directory: {output_dir}")
+
+    for file_path in input_path.rglob("*.wav"):
+        relative_path = file_path.relative_to(input_path)
+        parts = relative_path.parts
+        if len(parts) < 1:
+            continue
+        emotion = parts[0]
+        new_relative_path = Path(emotion) / relative_path.relative_to(*parts[:1])
+        output_file_path = output_path / new_relative_path.with_suffix(".npy")
+        output_file_path.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            audio = preprocess_audio(file_path, sr=sr, augment=augment)
+            if audio is None:
+                skipped_count += 1
+                continue
+
+            if augment:
+                audio_samples = create_augmented_samples(audio, sr, num_augmentations=5)
+            else:
+                audio_samples = [audio]
+            
+            for i, aug_audio in enumerate(audio_samples):
+                output_file_path = output_path / relative_path.with_stem(
+                    f"{relative_path.stem}_aug{i}" if i > 0 else relative_path.stem
+                ).with_suffix(".npy")
+                
+                mfcc = extract_mfcc(aug_audio, sr=sr, n_mfcc=n_mfcc)
+                if mfcc is None or mfcc.shape != (n_mfcc,):
+                    logging.error(f"Invalid MFCC shape for {file_path}: {mfcc.shape}")
+                    skipped_count += 1
+                    continue
+
+                np.save(output_file_path, mfcc.astype(np.float32))
+                processed_count += 1
+                logging.info(f"MFCC saved to {output_file_path}")
+
+            if not plot_done and plot_emotion and plot_emotion.lower() in file_path.parts:
+                plot_waveform_and_mfcc(audio, mfcc.reshape(n_mfcc, 1), sr=sr, title=f"{plot_emotion.capitalize()} Example")
+                plot_done = True
+
+        except Exception as e:
+            skipped_count += 1
+            logging.error(f"Error processing file {file_path}: {e}")
+
+    logging.info(f"Preprocessing complete. Processed: {processed_count}, Skipped: {skipped_count}")
+
+def create_augmented_samples(audio, sr, num_augmentations=5):
+    """Create multiple augmented versions of an audio sample"""
+    augmented_samples = [audio]
+    
+    for _ in range(num_augmentations):
+        aug_audio = audio.copy()
+        if np.random.random() < 0.7:
+            aug_audio = add_noise(aug_audio, noise_level=np.random.uniform(0.001, 0.02))
+        if np.random.random() < 0.7:
+            aug_audio = time_stretch(aug_audio, rate=np.random.uniform(0.8, 1.3))
+        if np.random.random() < 0.7:
+            aug_audio = pitch_shift(aug_audio, sr=sr, n_steps=np.random.randint(-4, 5))
+        if np.random.random() < 0.3:
+            aug_audio = librosa.effects.harmonic(aug_audio)
+        
+        augmented_samples.append(aug_audio)
+    
+    return augmented_samples
+
+def plot_waveform_and_mfcc(audio, mfcc, sr, title="Waveform and MFCC"):
+    """Plot waveform and MFCC features side by side."""
+    fig, ax = plt.subplots(2, 1, figsize=(12, 8))
+    librosa.display.waveshow(audio, sr=sr, ax=ax[0])
+    ax[0].set_title(f"{title} - Waveform")
+    img = librosa.display.specshow(mfcc, sr=sr, x_axis="time", ax=ax[1], cmap="viridis")
+    ax[1].set_title(f"{title} - MFCC")
+    fig.colorbar(img, ax=ax[1])
+    plt.tight_layout()
+    plt.show()
+
+if __name__ == "__main__":
+    input_dir = "./dataset/emotions"
+    output_dir = "./preprocessed"
+    preprocess_and_save_all(input_dir, output_dir, plot_emotion="happy", augment=True)
 
 def pad_or_truncate(mfcc, max_length=100):
     """
@@ -87,20 +180,22 @@ def pad_or_truncate(mfcc, max_length=100):
         return mfcc
     
 
-# Extract MFCC features
-def extract_mfcc(audio, sr=16000, n_mfcc=13, max_length=100):
-    """Extract MFCC features from audio."""
-    try:
-        mfccs = librosa.feature.mfcc(y=audio, sr=sr, n_mfcc=n_mfcc)
-        mfccs = (mfccs - np.mean(mfccs, axis=1, keepdims=True)) / np.std(mfccs, axis=1, keepdims=True)
-        mfccs = pad_or_truncate(mfccs, max_length=max_length)  # Ensure fixed length
-        return mfccs
-    except Exception as e:
-        logging.error(f"Error extracting MFCCs: {e}")
-        return None
+def extract_enhanced_features(audio, sr):
+    """Extract multiple audio features"""
+    features = []
     
-
-
+    # MFCC with delta features
+    mfcc = librosa.feature.mfcc(y=audio, sr=sr, n_mfcc=13)
+    delta_mfcc = librosa.feature.delta(mfcc)
+    delta2_mfcc = librosa.feature.delta(mfcc, order=2)
+    
+    # Additional features
+    chroma = librosa.feature.chroma_stft(y=audio, sr=sr)
+    spec_cent = librosa.feature.spectral_centroid(y=audio, sr=sr)
+    spec_contrast = librosa.feature.spectral_contrast(y=audio, sr=sr)
+    
+    features.extend([mfcc, delta_mfcc, delta2_mfcc, chroma, spec_cent, spec_contrast])
+    return np.concatenate(features, axis=0)
 
 # Plot waveform and MFCC
 def plot_waveform_and_mfcc(audio, mfcc, sr, title="Waveform and MFCC"):
@@ -119,7 +214,7 @@ def plot_waveform_and_mfcc(audio, mfcc, sr, title="Waveform and MFCC"):
 
 
 # Process and save audio files
-def preprocess_and_save_all(input_dir, output_dir, plot_emotion=None, sr=16000, n_mfcc=13, augment=False):
+def preprocess_and_save_all(input_dir, output_dir, plot_emotion=None, sr=16000, n_mfcc=40, augment=False):
     """Preprocess all audio files, extract MFCC features, and save them."""
     input_path = Path(input_dir)
     output_path = Path(output_dir)
@@ -133,7 +228,12 @@ def preprocess_and_save_all(input_dir, output_dir, plot_emotion=None, sr=16000, 
 
     for file_path in input_path.rglob("*.wav"):
         relative_path = file_path.relative_to(input_path)
-        output_file_path = output_path / relative_path.with_suffix(".npy")
+        parts = relative_path.parts
+        if len(parts) < 1:
+            continue
+        emotion = parts[0]  # Use only emotion
+        new_relative_path = Path(emotion) / relative_path.relative_to(*parts[:1])
+        output_file_path = output_path / new_relative_path.with_suffix(".npy")
         output_file_path.parent.mkdir(parents=True, exist_ok=True)
 
         try:
@@ -143,29 +243,215 @@ def preprocess_and_save_all(input_dir, output_dir, plot_emotion=None, sr=16000, 
                 skipped_count += 1
                 continue
 
-            # Extract MFCC
-            mfcc = extract_mfcc(audio, sr=sr, n_mfcc=n_mfcc)
-            if mfcc is None:
-                skipped_count += 1
-                continue
+            # Create augmented versions
+            if augment:
+                audio_samples = create_augmented_samples(audio, sr, num_augmentations=5)
+            else:
+                audio_samples = [audio]
+            
+            # Process and save each version
+            for i, aug_audio in enumerate(audio_samples):
+                # Create unique filename for augmented sample
+                output_file_path = output_path / relative_path.with_stem(
+                    f"{relative_path.stem}_aug{i}" if i > 0 else relative_path.stem
+                ).with_suffix(".npy")
+                
+                mfcc = extract_mfcc(aug_audio, sr=sr, n_mfcc=n_mfcc)
+                if mfcc is None or mfcc.shape != (n_mfcc,):
+                    logging.error(f"Invalid MFCC shape for {file_path}: {mfcc.shape}")
+                    skipped_count += 1
+                    continue
 
-            # Save MFCC
-            np.save(output_file_path, mfcc)
-            processed_count += 1
-            logging.info(f"MFCC saved to {output_file_path}")
+                # Save MFCC
+                np.save(output_file_path, mfcc.astype(np.float32))
+                processed_count += 1
+                logging.info(f"MFCC saved to {output_file_path}")
 
             # Plot one example if specified
             if not plot_done and plot_emotion and plot_emotion.lower() in file_path.parts:
-                plot_waveform_and_mfcc(audio, mfcc, sr=sr, title=f"{plot_emotion.capitalize()} Example")
+                plot_waveform_and_mfcc(audio, mfcc.reshape(n_mfcc, 1), sr=sr, title=f"{plot_emotion.capitalize()} Example")
                 plot_done = True
+
         except Exception as e:
             skipped_count += 1
             logging.error(f"Error processing file {file_path}: {e}")
 
     logging.info(f"Preprocessing complete. Processed: {processed_count}, Skipped: {skipped_count}")
 
+def create_augmented_samples(audio, sr, num_augmentations=5):
+    """Create multiple augmented versions of an audio sample"""
+    augmented_samples = [audio]  # Original sample
+    
+    for _ in range(num_augmentations):
+        aug_audio = audio.copy()
+        # Apply random combination of augmentations
+        if np.random.random() < 0.7:  # 70% chance of noise
+            aug_audio = add_noise(aug_audio, noise_level=np.random.uniform(0.001, 0.02))
+        if np.random.random() < 0.7:  # 70% chance of time stretch
+            aug_audio = time_stretch(aug_audio, rate=np.random.uniform(0.8, 1.3))
+        if np.random.random() < 0.7:  # 70% chance of pitch shift
+            aug_audio = pitch_shift(aug_audio, sr=sr, n_steps=np.random.randint(-4, 5))
+        if np.random.random() < 0.3:  # 30% chance of harmonic separation
+            aug_audio = librosa.effects.harmonic(aug_audio)
+        
+        augmented_samples.append(aug_audio)
+    
+    return augmented_samples
+
+def extract_spectrogram(audio, sr=16000, n_fft=512, hop_length=256, n_mels=128):
+    """
+    Extract Mel Spectrogram from audio.
+    Args:
+        audio (np.ndarray): Audio signal.
+        sr (int): Sampling rate.
+        n_fft (int): FFT window size.
+        hop_length (int): Hop length.
+        n_mels (int): Number of Mel bands.
+    Returns:
+        np.ndarray: Mel Spectrogram.
+    """
+    try:
+        spectrogram = librosa.feature.melspectrogram(
+            y=audio, sr=sr, n_fft=n_fft, hop_length=hop_length, n_mels=n_mels
+        )
+        spectrogram_db = librosa.power_to_db(spectrogram, ref=np.max)
+        spectrogram_db = (spectrogram_db - spectrogram_db.mean()) / spectrogram_db.std()
+        return spectrogram_db
+    except Exception as e:
+        logging.error(f"Error extracting spectrogram: {e}")
+        return None
+
+def plot_waveform_and_spectrogram(audio, spectrogram, sr, title="Waveform and Spectrogram"):
+    """Plot waveform and spectrogram features side by side."""
+    try:
+        fig, ax = plt.subplots(2, 1, figsize=(12, 8))
+        librosa.display.waveshow(audio, sr=sr, ax=ax[0])
+        ax[0].set_title(f"{title} - Waveform")
+        img = librosa.display.specshow(spectrogram, sr=sr, x_axis="time", y_axis="mel", 
+                                     ax=ax[1], cmap="viridis")
+        ax[1].set_title(f"{title} - Mel Spectrogram")
+        fig.colorbar(img, ax=ax[1])
+        plt.tight_layout()
+        plt.show()
+    except Exception as e:
+        logging.error(f"Error plotting waveform and spectrogram: {e}")
 
 if __name__ == "__main__":
     input_dir = "./dataset/emotions"
     output_dir = "./preprocessed"
     preprocess_and_save_all(input_dir, output_dir, plot_emotion="happy", augment=True)
+
+
+class ResidualBlock(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super(ResidualBlock, self).__init__()
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.relu = nn.ReLU(inplace=True)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
+        self.bn2 = nn.BatchNorm2d(out_channels)
+
+    def forward(self, x):
+        residual = x
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+        out = self.conv2(out)
+        out = self.bn2(out)
+        out += residual
+        out = self.relu(out)
+        return out
+
+class ImprovedEmotionCNN(nn.Module):
+    def __init__(self, num_classes):
+        super().__init__()
+        self.conv_blocks = nn.ModuleList([
+            # Increase model capacity with ResNet-style blocks
+            ResidualBlock(1, 64),
+            ResidualBlock(64, 128),
+            ResidualBlock(128, 256),
+            ResidualBlock(256, 512)
+        ])
+        
+        self.attention = nn.Sequential(
+            nn.Conv2d(512, 1, kernel_size=1),
+            nn.Sigmoid()
+        )
+        
+        self.global_pool = nn.AdaptiveAvgPool2d(1)
+        self.dropout = nn.Dropout(0.5)
+        self.fc = nn.Linear(512, num_classes)
+
+    def forward(self, x):
+        for block in self.conv_blocks:
+            x = block(x)
+        
+        # Add attention mechanism
+        att = self.attention(x)
+        x = x * att
+        x = self.global_pool(x)
+        x = x.view(x.size(0), -1)
+        x = self.dropout(x)
+        return self.fc(x)
+
+criterion = nn.CrossEntropyLoss()
+
+def train_with_mixup(model, x1, x2, y1, y2, alpha=0.2):
+    """Implement mixup training"""
+    lam = np.random.beta(alpha, alpha)
+    mixed_x = lam * x1 + (1 - lam) * x2
+    output = model(mixed_x)
+    return lam * criterion(output, y1) + (1 - lam) * criterion(output, y2)
+
+def improved_training_loop(model, train_loader, optimizer, device, num_epochs=100):
+    scaler = torch.cuda.amp.GradScaler()  # Add AMP for faster training
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(
+        optimizer, 
+        max_lr=0.001,
+        epochs=num_epochs,
+        steps_per_epoch=len(train_loader)
+    )
+    
+    for inputs, labels in train_loader:
+        inputs = inputs.to(device)
+        labels = labels.to(device)
+        
+        # Implement mixup
+        if np.random.random() < 0.5:
+            idx = torch.randperm(inputs.size(0))
+            loss = train_with_mixup(model, inputs, inputs[idx], labels, labels[idx])
+        else:
+            with torch.cuda.amp.autocast():
+                output = model(inputs)
+                loss = criterion(output, labels)
+        
+        scaler.scale(loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
+        scheduler.step()
+
+class ImprovedDataset(Dataset):
+    def __init__(self, file_paths, labels, classes, transform=None):
+        self.file_paths = file_paths
+        self.labels = labels
+        self.classes = classes
+        self.transform = transform
+        self.cache = {}  # Add caching
+        
+    def __getitem__(self, idx):
+        if idx in self.cache:
+            return self.cache[idx]
+            
+        try:
+            data = np.load(self.file_paths[idx])
+            if self.transform:
+                data = self.transform(data)
+            item = (
+                torch.tensor(data, dtype=torch.float32).unsqueeze(0),
+                torch.tensor(self.labels[idx], dtype=torch.long)
+            )
+            self.cache[idx] = item  # Cache the processed item
+            return item
+        except Exception as e:
+            logging.error(f"Error loading sample {idx}: {e}")
+            raise

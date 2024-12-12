@@ -6,6 +6,7 @@ from torch.utils.data import Dataset
 from sklearn.model_selection import StratifiedKFold, train_test_split
 import logging
 from collections import Counter
+from torchvision import transforms
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -13,9 +14,9 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 
 class MFCCDataset(Dataset):
     """
-    Custom PyTorch Dataset for loading MFCC features and labels.
+    Adjusted to load spectrograms instead of MFCCs.
     """
-    def __init__(self, file_paths, labels, classes, n_mfcc=13, max_length=100):
+    def __init__(self, file_paths, labels, classes, transform=None):
         """
         Args:
             file_paths (list): List of file paths to MFCC features.
@@ -27,8 +28,9 @@ class MFCCDataset(Dataset):
         self.file_paths = file_paths
         self.labels = labels
         self.classes = classes
-        self.n_mfcc = n_mfcc
-        self.max_length = max_length
+        self.transform = transform  # Uses custom transform from main_complex.py
+        self.label_to_idx = {label: idx for idx, label in enumerate(classes)}
+        self.numeric_labels = [self.label_to_idx[label] for label in labels]
 
     def __len__(self):
         """
@@ -44,81 +46,180 @@ class MFCCDataset(Dataset):
             torch.Tensor: Corresponding label.
         """
         try:
-            mfcc = np.load(self.file_paths[idx])
-            if mfcc.shape != (self.n_mfcc, self.max_length):
-                raise ValueError(f"MFCC shape mismatch at {self.file_paths[idx]}")
-            mfcc = torch.tensor(mfcc, dtype=torch.float32).unsqueeze(0)  # Add channel dimension
-            label = torch.tensor(self.labels[idx], dtype=torch.long)
-            return mfcc, label
+            features = np.load(self.file_paths[idx], allow_pickle=True)
+            # For 1D array of shape (40,), reshape to (40,)
+            if features.ndim == 1:
+                features = features.reshape(-1)  # Ensure 1D
+            elif features.ndim == 2:
+                features = features.squeeze()  # Remove extra dimensions
+            
+            # Convert to tensor without adding extra dimensions
+            features = torch.tensor(features, dtype=torch.float32)
+            label = torch.tensor(self.numeric_labels[idx], dtype=torch.long)
+            return features, label
         except Exception as e:
             logging.error(f"Error loading sample {idx}: {e}")
-            raise ValueError(f"Failed to load sample {idx}.")
+            return torch.zeros(40, dtype=torch.float32), torch.tensor(0, dtype=torch.long)
 
     @staticmethod
     def prepare_data(data_dir):
-        """
-        Prepare dataset by loading file paths and labels.
-
-        Args:
-            data_dir (str): Directory containing preprocessed MFCC files.
-
-        Returns:
-            tuple: (file_paths, labels, classes).
-        """
+        """Prepare data using only emotion labels."""
         if not os.path.isdir(data_dir):
-            raise ValueError(f"Dataset directory {data_dir} does not exist or is not accessible.")
+            raise ValueError(f"Dataset directory {data_dir} does not exist")
 
-        all_file_paths, all_composite_labels, classes = [], [], []
+        all_file_paths = []
+        all_labels = []
+        classes = set()
+        min_samples_per_class = float('inf')
+        class_samples = {}
+
+        # First pass: count samples per class
         for root, _, files in os.walk(data_dir):
             if not files:
                 continue
-            parts = Path(root).parts[-2:]  # Last two parts: emotion/gender
-            if len(parts) < 2:
+            parts = Path(root).parts[-1:]  # Only consider the emotion part
+            if len(parts) < 1:
                 continue
-            emotion, gender = parts
-            composite_label = (emotion, gender)
-            if composite_label not in classes:
-                classes.append(composite_label)
-            for file in files:
-                if file.endswith(".npy"):
-                    all_file_paths.append(os.path.join(root, file))
-                    all_composite_labels.append(composite_label)
 
-        # Map composite labels to unique indices
-        label_to_index = {label: idx for idx, label in enumerate(classes)}
-        all_labels = [label_to_index[label] for label in all_composite_labels]
-        return all_file_paths, all_labels, classes
+            emotion = parts[0]
+            label = emotion  # Use only emotion as label
+
+            if label not in class_samples:
+                class_samples[label] = 0
+            class_samples[label] += len(files)
+
+        # Check class balance
+        for label, count in class_samples.items():
+            min_samples_per_class = min(min_samples_per_class, count)
+            logging.info(f"Class {label}: {count} samples")
+
+        # Second pass: collect data
+        for root, _, files in os.walk(data_dir):
+            if not files:
+                continue
+            parts = Path(root).parts[-1:]  # Only consider the emotion part
+            if len(parts) < 1:
+                continue
+
+            emotion = parts[0]
+            label = emotion  # Use only emotion as label
+            classes.add(label)
+
+            for file in files:
+                if file.endswith('.npy'):
+                    file_path = os.path.join(root, file)
+                    try:
+                        # Validate file content
+                        mfcc = np.load(file_path, allow_pickle=True)
+                        if not isinstance(mfcc, np.ndarray) or mfcc.dtype.kind not in 'fc':
+                            logging.warning(f"Skipping invalid file type: {file_path}, type: {type(mfcc)}, dtype: {mfcc.dtype}")
+                            continue
+                            
+                        # Add debug logging
+                        logging.debug(f"Loading file {file_path} with shape {mfcc.shape}")
+                        
+                        # Handle both 40-dim and 13-dim features
+                        if mfcc.ndim == 1:
+                            if mfcc.shape[0] not in [13, 40]:
+                                logging.warning(f"Skipping file with invalid feature dimension: {file_path}, shape: {mfcc.shape}")
+                                continue
+                        elif mfcc.ndim == 2:
+                            if mfcc.shape[1] not in [13, 40]:
+                                logging.warning(f"Skipping file with invalid feature dimension: {file_path}, shape: {mfcc.shape}")
+                                continue
+                        else:
+                            logging.warning(f"Skipping file with invalid dimensions: {file_path}, shape: {mfcc.shape}")
+                            continue
+                            
+                        all_file_paths.append(file_path)
+                        all_labels.append(label)
+                    except Exception as e:
+                        logging.warning(f"Error validating file {file_path}: {str(e)}")
+                        continue
+
+        classes = sorted(classes)
+        logging.info(f"Total classes (emotions): {classes}")
+        logging.info(f"Total samples: {len(all_file_paths)}")
+        logging.info(f"Minimum samples per class: {min_samples_per_class}")
+
+        # Additional data quality checks
+        valid_file_paths = []
+        valid_labels = []
+        
+        for file_path, label in zip(all_file_paths, all_labels):
+            try:
+                mfcc = np.load(file_path, allow_pickle=True)
+                # Check for NaN or Inf values
+                if np.isnan(mfcc).any() or np.isinf(mfcc).any():
+                    logging.warning(f"Found NaN/Inf values in {file_path}")
+                    continue
+                    
+                # Handle both 1D and 2D arrays for variance check
+                if mfcc.ndim == 1:
+                    # For 1D array, just check overall variance
+                    if np.var(mfcc) < 1e-6:
+                        logging.warning(f"Found zero variance features in {file_path}")
+                        continue
+                elif mfcc.ndim == 2:
+                    # For 2D array, check variance along time axis
+                    if np.any(np.var(mfcc, axis=1) < 1e-6):
+                        logging.warning(f"Found zero variance features in {file_path}")
+                        continue
+                
+                valid_file_paths.append(file_path)
+                valid_labels.append(label)
+                
+            except Exception as e:
+                logging.warning(f"Error validating {file_path}: {e}")
+                continue
+        
+        return valid_file_paths, valid_labels, classes
 
     @staticmethod
-    def split_train_test(data_dir, test_size=0.2, n_splits=5, random_state=42):
-        """
-        Split the dataset into training, validation (cross-validation), and test sets.
+    def compute_class_weights(labels):
+        """Compute class weights based on emotion labels."""
+        label_counts = Counter(labels)
+        total_samples = len(labels)
+        class_weights = {label: total_samples / (len(label_counts) * count) 
+                        for label, count in label_counts.items()}
+        return class_weights
 
-        Args:
-            data_dir (str): Directory containing preprocessed MFCC files.
-            test_size (float): Proportion of data to reserve for the test set.
-            n_splits (int): Number of cross-validation folds.
-            random_state (int): Random seed for reproducibility.
-
-        Returns:
-            tuple: (train_file_paths, train_labels, test_file_paths, test_labels, classes, folds)
-        """
-        file_paths, labels, classes = MFCCDataset.prepare_data(data_dir)
-
-        # Split into train/validation and test sets
+    @staticmethod
+    def split_train_test(dataset_dir, test_size=0.2, n_splits=3):
+        """Split dataset into train and test sets using emotion labels."""
+        paths, labels, classes = MFCCDataset.prepare_data(dataset_dir)
+        
+        # Convert composite labels to numeric for stratification
+        label_to_idx = {label: idx for idx, label in enumerate(classes)}
+        numeric_labels = [label_to_idx[label] for label in labels]
+        
+        # Perform stratified split using numeric labels
         train_paths, test_paths, train_labels, test_labels = train_test_split(
-            file_paths, labels, test_size=test_size, stratify=labels, random_state=random_state
+            paths, 
+            labels,  # Keep original labels for dataset creation
+            test_size=test_size,
+            stratify=numeric_labels,  # Use numeric labels for stratification
+            random_state=42
         )
-        logging.info(f"Training set size: {len(train_paths)}, Test set size: {len(test_paths)}")
-
-        # Cross-validation on the training set
-        skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
-        folds = list(skf.split(train_paths, train_labels))
-
-        # Log class distribution for the test set
-        MFCCDataset._log_class_distribution(test_labels, classes, split_name="Test")
-
+        
+        # Create folds for cross-validation using numeric labels
+        skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
+        train_numeric_labels = [label_to_idx[label] for label in train_labels]
+        folds = list(skf.split(train_paths, train_numeric_labels))
+        
+        # Verify distributions
+        MFCCDataset.verify_class_distribution(train_labels, "Training")
+        MFCCDataset.verify_class_distribution(test_labels, "Test")
+        
         return train_paths, train_labels, test_paths, test_labels, classes, folds
+
+    @staticmethod
+    def verify_class_distribution(labels, split_name=""):
+        """Verify class distribution in dataset split"""
+        unique, counts = np.unique(labels, return_counts=True)
+        distribution = dict(zip(unique, counts))
+        logging.info(f"{split_name} set class distribution: {distribution}")
+        return distribution
 
     @staticmethod
     def _log_class_distribution(labels, classes, split_name):
@@ -133,6 +234,12 @@ class MFCCDataset(Dataset):
         composite_labels = [classes[label] for label in labels]
         class_distribution = Counter(composite_labels)
         logging.info(f"{split_name} set distribution: {class_distribution}")
+
+
+# If using transforms, ensure they are compatible with inputs of shape (1, 40)
+def get_data_transforms():
+    """Returns data transformations."""
+    return None  # No transforms needed unless you want to add any
 
 
 if __name__ == "__main__":
