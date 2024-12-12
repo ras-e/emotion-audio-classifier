@@ -1,3 +1,5 @@
+# This will unzip the three datasets and organize them correctly, run this first
+
 import os
 import shutil
 import logging

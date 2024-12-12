@@ -6,7 +6,6 @@ from torch.utils.data import Dataset
 from sklearn.model_selection import StratifiedKFold, train_test_split
 import logging
 from collections import Counter
-from torchvision import transforms
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")

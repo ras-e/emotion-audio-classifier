@@ -1,0 +1,98 @@
+<!doctype html>
+<html>
+<head>
+    <title>Emotion Recognition</title>
+    <style>
+        body { 
+            font-family: Arial, sans-serif; 
+            margin: 40px; 
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .container {
+            width: 100%;
+            max-width: 600px;
+        }
+        .upload-form { 
+            border: 2px dashed #ccc; 
+            padding: 20px; 
+            text-align: center;
+            margin-bottom: 20px;
+            border-radius: 8px;
+        }
+        .result {
+            background-color: #f0f0f0;
+            padding: 20px;
+            text-align: center;
+            border-radius: 8px;
+            margin-top: 20px;
+        }
+        .hidden {
+            display: none;
+        }
+        .submit-btn {
+            margin-top: 20px;
+            padding: 10px 20px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .submit-btn:hover { 
+            background-color: #45a049; 
+        }
+        .result-text {
+            font-size: 24px;
+            color: #333;
+            margin: 10px 0;
+        }
+        .confidence-text {
+            font-size: 20px;
+            color: #555;
+            margin: 10px 0;
+        }
+        input[type="file"] {
+            margin: 20px 0;
+        }
+        .plots img {
+            width: 100%;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="upload-form">
+            <h1>Upload an audio file for emotion prediction</h1>
+            <form method="post" enctype="multipart/form-data">
+                <input type="file" name="file" accept=".wav"><br>
+                <input type="submit" value="Upload and Analyze" class="submit-btn">
+            </form>
+        </div>
+        {% if error %}
+        <div class="error">
+            <p class="error-text">{{ error }}</p>
+        </div>
+        {% endif %}
+        <div class="result {% if not result %}hidden{% endif %}">
+            <h2>Detected Emotion:</h2>
+            <p class="result-text">{{ result|capitalize if result else '' }}</p>
+            <p class="confidence-text">Confidence: {{ confidence|default('N/A') }}</p>
+        </div>
+        {% if plot_paths %}
+        <div class="plots">
+            <h2>Preprocessing Graphs:</h2>
+            {% for plot in plot_paths %}
+                <img src="{{ url_for('static', filename=plot) }}" alt="Preprocessing Plot">
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="plots hidden">
+            <h2>Preprocessing Graphs:</h2>
+        </div>
+        {% endif %}
+    </div>
+</body>
+</html>

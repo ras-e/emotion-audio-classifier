@@ -7,12 +7,12 @@ from torch.utils.data import DataLoader
 from sklearn.model_selection import StratifiedKFold
 from src.dataset import MFCCDataset
 from src.train import run_epoch
-from src.model_new import initialize_model, initialize_criterion, initialize_optimizer
+from model import initialize_model, initialize_criterion, initialize_optimizer
 from src.evaluation import evaluate_model
 from time import time
 from datetime import timedelta
 
-def train_model(model, train_loader, val_loader, criterion, optimizer, device, fold, num_epochs=10, total_folds=None, global_start_time=None):
+def train_model(model, train_loader, val_loader, criterion, optimizer, device, fold, classes, num_epochs=10, total_folds=None, global_start_time=None):
     best_val_loss = float('inf')
     patience = 5
     patience_counter = 0
@@ -35,6 +35,7 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, device, f
                 'model_state_dict': best_model_wts,
                 'optimizer_state_dict': optimizer.state_dict(),
                 'loss': best_val_loss,
+                'classes': classes  # Add this line
             }, f'model_fold_{fold}_best.pth')
         else:
             patience_counter += 1
@@ -136,7 +137,7 @@ def main():
         model, criterion, optimizer, _ = initialize_model_fn(train_loader)
         
         train_model(
-            model, train_loader, val_loader, criterion, optimizer, device, fold, 
+            model, train_loader, val_loader, criterion, optimizer, device, fold, classes,
             num_epochs=num_epochs, total_folds=n_splits, global_start_time=global_start_time
         )
 
@@ -156,6 +157,7 @@ def main():
                 'optimizer_state_dict': optimizer.state_dict(),
                 'loss': best_fold_metrics,
                 'fold': fold,
+                'classes': classes  # Add this line
             }, 'best_model.pth')
 
     avg_metrics = calculate_average_metrics(results)

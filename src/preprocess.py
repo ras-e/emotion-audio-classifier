@@ -1,12 +1,14 @@
+# This will preprocess the images in the "emotions" folder in the dataset to prepare for model training
+# Run before training and after extracting the datasets
+
 from pathlib import Path
 import librosa
 import numpy as np
 import librosa.display
 import matplotlib.pyplot as plt
 import logging
-import random
-import torch
 import torchaudio  # Use torchaudio for efficient audio processing
+import os
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -40,8 +42,8 @@ def augment_audio(audio, sr):
     return audio
 
 # Preprocess audio
-def preprocess_audio(file_path, sr=16000, augment=False):
-    """Load and preprocess an audio file. Optionally apply augmentation."""
+def preprocess_audio(file_path, sr=16000, augment=False, plot_dir=None):
+    """Load and preprocess an audio file. Optionally apply augmentation and save plots."""
     audio, _ = torchaudio.load(file_path)
     audio = audio.mean(dim=0)  # Convert to mono
     audio = audio.numpy()
@@ -57,6 +59,48 @@ def preprocess_audio(file_path, sr=16000, augment=False):
     
     if augment:
         audio = augment_audio(audio, sr)
+
+    if plot_dir:
+        try:
+            os.makedirs(plot_dir, exist_ok=True)
+            base_filename = os.path.basename(os.path.splitext(file_path)[0])
+            
+            # Save waveform plot with verification
+            waveform_plot_path = os.path.join(plot_dir, f"{base_filename}_waveform.png")
+            plt.figure(figsize=(10, 4))
+            librosa.display.waveshow(audio, sr=sr)
+            plt.title('Waveform')
+            plt.tight_layout()
+            plt.savefig(waveform_plot_path)
+            plt.close()
+            
+            # Verify waveform plot
+            if not os.path.isfile(waveform_plot_path):
+                logging.error(f"Failed to save waveform plot: {waveform_plot_path}")
+            
+            # Save MFCC plot with verification
+            mfcc = librosa.feature.mfcc(y=audio, sr=sr, n_mfcc=40)
+            mfcc_plot_path = os.path.join(plot_dir, f"{base_filename}_mfcc.png")
+            plt.figure(figsize=(10, 4))
+            librosa.display.specshow(mfcc, sr=sr, x_axis='time')
+            plt.colorbar(format='%+2.0f dB')
+            plt.title('MFCC')
+            plt.tight_layout()
+            plt.savefig(mfcc_plot_path)
+            plt.close()
+            
+            # Verify MFCC plot
+            if not os.path.isfile(mfcc_plot_path):
+                logging.error(f"Failed to save MFCC plot: {mfcc_plot_path}")
+            
+            if os.path.isfile(waveform_plot_path) and os.path.isfile(mfcc_plot_path):
+                logging.info(f"Successfully saved plots to {plot_dir}")
+            else:
+                logging.error("Failed to save one or more plots")
+                
+        except Exception as e:
+            logging.error(f"Error saving plots: {e}")
+
     return audio
 
 def extract_mfcc(audio, sr=16000, n_mfcc=40):
@@ -143,6 +187,7 @@ def create_augmented_samples(audio, sr, num_augmentations=5):
     
     return augmented_samples
 
+# Is this used? Duplicate function?
 def plot_waveform_and_mfcc(audio, mfcc, sr, title="Waveform and MFCC"):
     """Plot waveform and MFCC features side by side."""
     fig, ax = plt.subplots(2, 1, figsize=(12, 8))
@@ -197,7 +242,7 @@ def extract_enhanced_features(audio, sr):
     features.extend([mfcc, delta_mfcc, delta2_mfcc, chroma, spec_cent, spec_contrast])
     return np.concatenate(features, axis=0)
 
-# Plot waveform and MFCC
+# Is this used? Duplicate function?
 def plot_waveform_and_mfcc(audio, mfcc, sr, title="Waveform and MFCC"):
     """Plot waveform and MFCC features side by side."""
     try:
@@ -298,6 +343,7 @@ def create_augmented_samples(audio, sr, num_augmentations=5):
     
     return augmented_samples
 
+# Is this used?
 def extract_spectrogram(audio, sr=16000, n_fft=512, hop_length=256, n_mels=128):
     """
     Extract Mel Spectrogram from audio.
@@ -321,6 +367,7 @@ def extract_spectrogram(audio, sr=16000, n_fft=512, hop_length=256, n_mels=128):
         logging.error(f"Error extracting spectrogram: {e}")
         return None
 
+# Is this used? Duplicate function?
 def plot_waveform_and_spectrogram(audio, spectrogram, sr, title="Waveform and Spectrogram"):
     """Plot waveform and spectrogram features side by side."""
     try:
