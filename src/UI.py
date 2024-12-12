@@ -48,6 +48,8 @@ def upload_file():
                 with torch.no_grad():
                     outputs = model(input_tensor)
                     _, predicted = torch.max(outputs, 1)
+                    logging.info(f"Predicted class: {predicted.item()}")
+                    logging.info(f"Predicted class: {classes[predicted.item()]}")
                     emotion = classes[predicted.item()]
                 return render_template('result.html', emotion=emotion)
             except Exception as e:
