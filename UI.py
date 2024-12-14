@@ -11,7 +11,7 @@ import librosa.display
 import glob
 
 from src.preprocess import preprocess_audio, extract_mfcc
-from src.model_testing import initialize_model
+from deprecated.model_testing import initialize_model
 
 app = Flask(__name__)
 
