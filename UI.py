@@ -11,7 +11,7 @@ import librosa.display
 import glob
 
 from src.preprocess import preprocess_audio, extract_mfcc
-from src.model import initialize_model
+from src.model_testing import initialize_model
 
 app = Flask(__name__)
 
@@ -24,7 +24,7 @@ classes = ['angry', 'calm', 'disgust', 'fearful', 'happy', 'neutral', 'sad', 'su
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 num_classes = 8  # Number of emotions
 model = initialize_model(num_classes, device)
-model_path = os.path.join(os.path.dirname(__file__), 'best_model_old.pth')
+model_path = os.path.join(os.path.dirname(__file__), 'best_model.pth')
 checkpoint = torch.load(model_path, map_location=device)
 model.load_state_dict(checkpoint['model_state_dict'])
 model.eval()

@@ -184,7 +184,7 @@ class MFCCDataset(Dataset):
         return class_weights
 
     @staticmethod
-    def split_train_test(dataset_dir, test_size=0.2, n_splits=3):
+    def split_train_test(dataset_dir, test_size=0.2, n_splits=5):
         """Split dataset into train and test sets using emotion labels."""
         paths, labels, classes = MFCCDataset.prepare_data(dataset_dir)
         
@@ -192,19 +192,15 @@ class MFCCDataset(Dataset):
         label_to_idx = {label: idx for idx, label in enumerate(classes)}
         numeric_labels = [label_to_idx[label] for label in labels]
         
-        # Perform stratified split using numeric labels
-        train_paths, test_paths, train_labels, test_labels = train_test_split(
-            paths, 
-            labels,  # Keep original labels for dataset creation
-            test_size=test_size,
-            stratify=numeric_labels,  # Use numeric labels for stratification
-            random_state=42
-        )
-        
-        # Create folds for cross-validation using numeric labels
-        skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
-        train_numeric_labels = [label_to_idx[label] for label in train_labels]
-        folds = list(skf.split(train_paths, train_numeric_labels))
+        if n_splits == 1:
+            from sklearn.model_selection import train_test_split
+            train_paths, test_paths, train_labels, test_labels = train_test_split(
+                paths, labels, test_size=test_size, random_state=42, stratify=labels
+            )
+            folds = None  # No folds when not using cross-validation
+        else:
+            skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
+            folds = list(skf.split(paths, labels))
         
         # Verify distributions
         MFCCDataset.verify_class_distribution(train_labels, "Training")

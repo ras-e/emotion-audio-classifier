@@ -16,4 +16,4 @@ dataset/Audio_Song_Actors_01-24.zip
 /uploads
 /dataset/zips
 /static
-model_*
+model_fold_*
