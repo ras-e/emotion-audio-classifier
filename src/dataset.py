@@ -16,14 +16,6 @@ class MFCCDataset(Dataset):
     Adjusted to load spectrograms instead of MFCCs.
     """
     def __init__(self, file_paths, labels, classes, transform=None):
-        """
-        Args:
-            file_paths (list): List of file paths to MFCC features.
-            labels (list): List of composite labels corresponding to file paths.
-            classes (list): List of unique composite class names.
-            n_mfcc (int): Number of MFCC coefficients.
-            max_length (int): Fixed length for MFCC frames.
-        """
         self.file_paths = file_paths
         self.labels = labels
         self.classes = classes
@@ -63,12 +55,16 @@ class MFCCDataset(Dataset):
     @staticmethod
     def prepare_data(data_dir):
         """Prepare data using only emotion labels."""
-        if not os.path.isdir(data_dir):
-            raise ValueError(f"Dataset directory {data_dir} does not exist")
+        file_paths, labels = MFCCDataset._collect_file_paths_and_labels(data_dir)
+        valid_file_paths, valid_labels = MFCCDataset._validate_samples(file_paths, labels)
+        classes = sorted(set(valid_labels))
+        return valid_file_paths, valid_labels, classes
 
-        all_file_paths = []
-        all_labels = []
-        classes = set()
+    @staticmethod
+    def _collect_file_paths_and_labels(data_dir):
+        """Collect file paths and labels."""
+        file_paths = []
+        labels = []
         min_samples_per_class = float('inf')
         class_samples = {}
 
@@ -102,7 +98,6 @@ class MFCCDataset(Dataset):
 
             emotion = parts[0]
             label = emotion  # Use only emotion as label
-            classes.add(label)
 
             for file in files:
                 if file.endswith('.npy'):
@@ -130,22 +125,21 @@ class MFCCDataset(Dataset):
                             logging.warning(f"Skipping file with invalid dimensions: {file_path}, shape: {mfcc.shape}")
                             continue
                             
-                        all_file_paths.append(file_path)
-                        all_labels.append(label)
+                        file_paths.append(file_path)
+                        labels.append(label)
                     except Exception as e:
                         logging.warning(f"Error validating file {file_path}: {str(e)}")
                         continue
 
-        classes = sorted(classes)
-        logging.info(f"Total classes (emotions): {classes}")
-        logging.info(f"Total samples: {len(all_file_paths)}")
-        logging.info(f"Minimum samples per class: {min_samples_per_class}")
+        return file_paths, labels
 
-        # Additional data quality checks
+    @staticmethod
+    def _validate_samples(file_paths, labels):
+        """Validate samples to ensure usability."""
         valid_file_paths = []
         valid_labels = []
         
-        for file_path, label in zip(all_file_paths, all_labels):
+        for file_path, label in zip(file_paths, labels):
             try:
                 mfcc = np.load(file_path, allow_pickle=True)
                 # Check for NaN or Inf values
@@ -172,15 +166,22 @@ class MFCCDataset(Dataset):
                 logging.warning(f"Error validating {file_path}: {e}")
                 continue
         
-        return valid_file_paths, valid_labels, classes
+        return valid_file_paths, valid_labels
 
     @staticmethod
-    def compute_class_weights(labels):
-        """Compute class weights based on emotion labels."""
+    def compute_class_weights(labels, classes):
+
         label_counts = Counter(labels)
         total_samples = len(labels)
-        class_weights = {label: total_samples / (len(label_counts) * count) 
-                        for label, count in label_counts.items()}
+        class_weights = {}
+        
+        for class_name in classes:
+            count = label_counts.get(class_name, 0)
+            if count == 0:
+                class_weights[class_name] = 1.0  # Handle missing classes
+            else:
+                class_weights[class_name] = total_samples / (len(classes) * count)
+        
         return class_weights
 
     @staticmethod
@@ -192,15 +193,18 @@ class MFCCDataset(Dataset):
         label_to_idx = {label: idx for idx, label in enumerate(classes)}
         numeric_labels = [label_to_idx[label] for label in labels]
         
-        if n_splits == 1:
-            from sklearn.model_selection import train_test_split
-            train_paths, test_paths, train_labels, test_labels = train_test_split(
-                paths, labels, test_size=test_size, random_state=42, stratify=labels
-            )
-            folds = None  # No folds when not using cross-validation
-        else:
+        # Perform train-test split first
+        train_paths, test_paths, train_labels, test_labels = train_test_split(
+            paths, labels, test_size=test_size, random_state=42, stratify=labels
+        )
+        
+        # Then set up cross-validation folds if needed
+        if n_splits > 1:
             skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
-            folds = list(skf.split(paths, labels))
+            folds = list(skf.split([path for path in train_paths], 
+                                 [label_to_idx[label] for label in train_labels]))
+        else:
+            folds = None
         
         # Verify distributions
         MFCCDataset.verify_class_distribution(train_labels, "Training")
@@ -221,20 +225,33 @@ class MFCCDataset(Dataset):
         """
         Log class distribution for a specific dataset split.
 
-        Args:
-            labels (list): List of labels for the dataset.
-            classes (list): List of unique composite class names.
-            split_name (str): Name of the dataset split (e.g., "Training").
+
         """
         composite_labels = [classes[label] for label in labels]
         class_distribution = Counter(composite_labels)
         logging.info(f"{split_name} set distribution: {class_distribution}")
 
+    # Optionally keep the mel spectrogram code for future use
+    def _load_mel_spectrogram(self, file_path):
+        """Load mel spectrogram (reserved for future implementation)."""
+        pass  # Placeholder function
 
-# If using transforms, ensure they are compatible with inputs of shape (1, 40)
+
+class SpectrogramTransform:
+    """Transform for processing spectrograms"""
+    def __call__(self, x):
+        if not isinstance(x, torch.Tensor):
+            x = torch.tensor(x, dtype=torch.float32)
+        if len(x.shape) == 2:
+            x = x.unsqueeze(0)
+        elif len(x.shape) > 3:
+            x = x.squeeze()
+            if len(x.shape) == 2:
+                x = x.unsqueeze(0)
+        return x
+
 def get_data_transforms():
-    """Returns data transformations."""
-    return None  # No transforms needed unless you want to add any
+    return SpectrogramTransform()
 
 
 if __name__ == "__main__":
