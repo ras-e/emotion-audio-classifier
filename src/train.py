@@ -5,64 +5,52 @@ from torch.utils.data import DataLoader, Subset
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 from sklearn.model_selection import StratifiedKFold
 import logging
+from enum import Enum, auto
+from typing import Dict, Any, Optional, Tuple
+import os
+from src.utils import save_checkpoint, calculate_metrics
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
+class TrainingMode(Enum):
+    """Training mode selection"""
+    SIMPLE = auto()
+    KFOLD = auto() # KFOLD with cross-validation can be useful for small datesets
+
 def run_epoch(model, dataloader, criterion, optimizer, device, phase="train"):
-    """
-    Run a single epoch for training or validation.
-
-    Args:
-        model (torch.nn.Module): The CNN model instance.
-        dataloader (DataLoader): DataLoader for training or validation data.
-        criterion: Loss function.
-        optimizer: Optimizer (used only during training phase).
-        device: Device to run computations on (CPU or GPU).
-        phase (str): Either "train" or "validate".
-
-    Returns:
-        dict: Metrics for the epoch (loss, accuracy, precision, recall, F1-score).
-    """
     is_train = phase == "train"
     model.train() if is_train else model.eval()
-
     running_loss = 0.0
     all_preds, all_labels = [], []
 
     for inputs, labels in dataloader:
         inputs, labels = inputs.to(device), labels.to(device)
 
-        with torch.set_grad_enabled(is_train):
+        if is_train:
+            optimizer.zero_grad()
             outputs = model(inputs)
             loss = criterion(outputs, labels)
-            _, preds = torch.max(outputs, 1)
+            loss.backward()
+            optimizer.step()
+        else:
+            with torch.no_grad():
+                outputs = model(inputs)
+                loss = criterion(outputs, labels)
 
-            if is_train:
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-
+        _, preds = torch.max(outputs, 1)
         running_loss += loss.item() * inputs.size(0)
         all_preds.extend(preds.cpu().numpy())
         all_labels.extend(labels.cpu().numpy())
 
     loss = running_loss / len(dataloader.dataset)
-    accuracy = accuracy_score(all_labels, all_preds)
-    precision = precision_score(all_labels, all_preds, average="weighted")
-    recall = recall_score(all_labels, all_preds, average="weighted")
-    f1 = f1_score(all_labels, all_preds, average="weighted")
+    metrics = calculate_metrics(all_labels, all_preds)
+    metrics['loss'] = loss
+    return metrics
 
-    return {
-        "loss": loss,
-        "accuracy": accuracy,
-        "precision": precision,
-        "recall": recall,
-        "f1_score": f1,
-    }
 
+# Implement label smoothing in the loss function.
 def initialize_criterion(class_weights_tensor):
-    """Implement label smoothing in the loss function."""
     return nn.CrossEntropyLoss(weight=class_weights_tensor, label_smoothing=0.1)
 
 def configure_scheduler(optimizer, num_epochs, train_loader):
@@ -74,73 +62,138 @@ def configure_scheduler(optimizer, num_epochs, train_loader):
         epochs=num_epochs
     )
 
-def train_model_kfold(model_cls, dataset, device, scheduler_fn, n_splits=5, num_epochs=20, batch_size=32):
-    """
-    Train the CNN model using Stratified K-Fold Cross-Validation.
-
-    Args:
-        model_cls (callable): Callable that initializes the model, optimizer, and criterion.
-        dataset (torch.utils.data.Dataset): The full dataset to be split for cross-validation.
-        device (torch.device): Device to run computations on (CPU or GPU).
-        scheduler_fn (callable): Callable that returns a learning rate scheduler.
-        n_splits (int): Number of folds for cross-validation.
-        num_epochs (int): Number of training epochs for each fold.
-        batch_size (int): Batch size for DataLoader.
-
-    Returns:
-        dict: Cross-validation results, including per-fold metrics.
-    """
-    skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
-    fold_results = {}
-
-    for fold, (train_indices, val_indices) in enumerate(skf.split(dataset.file_paths, dataset.labels)):
-        logging.info(f"Starting fold {fold + 1}/{n_splits}")
-
-        train_subset = Subset(dataset, train_indices)
-        val_subset = Subset(dataset, val_indices)
-
-        train_loader = DataLoader(train_subset, batch_size=batch_size, shuffle=True, num_workers=4)
-        val_loader = DataLoader(val_subset, batch_size=batch_size, shuffle=False, num_workers=4)
-
-        model, criterion, optimizer = model_cls()
-        scheduler = scheduler_fn(optimizer, num_epochs, train_loader)
-
-        best_val_loss = float("inf")
-        best_model_wts = None
-
-        for epoch in range(num_epochs):
-            train_metrics = run_epoch(model, train_loader, criterion, optimizer, device, phase="train")
-            val_metrics = run_epoch(model, val_loader, criterion, optimizer, device, phase="validate")
-            scheduler.step()
-
-            if val_metrics['loss'] < best_val_loss:
-                best_val_loss = val_metrics['loss']
-                best_model_wts = copy.deepcopy(model.state_dict())
-                torch.save({
-                    'model_state_dict': best_model_wts,
-                    'optimizer_state_dict': optimizer.state_dict(),
-                    'loss': best_val_loss,
+def train_model(
+    mode: TrainingMode,
+    model_fn: callable,
+    dataset: torch.utils.data.Dataset,
+    device: torch.device,
+    config: Dict[str, Any]
+) -> Tuple[Dict[str, float], Optional[dict]]:
+    """Main training orchestrator that handles both simple and k-fold training."""
+    
+    def _train_loop(model, train_loader, val_loader, criterion, optimizer, fold=None):
+        """Internal training loop used by both simple and k-fold training"""
+        best_val_loss = float('inf')
+        patience_counter = 0
+        best_state = None
+        training_history = []
+        
+        for epoch in range(config['num_epochs']):
+            try:
+                train_metrics = run_epoch(model, train_loader, criterion, optimizer, device, "train")
+                val_metrics = run_epoch(model, val_loader, criterion, optimizer, device, "val")
+                
+                logging.info(f"Epoch {epoch + 1}/{config['num_epochs']}")
+                logging.info(f"Train Loss: {train_metrics['loss']:.4f}, Val Loss: {val_metrics['loss']:.4f}")
+                
+                if val_metrics['loss'] < best_val_loss:
+                    best_val_loss = val_metrics['loss']
+                    patience_counter = 0
+                    best_state = {
+                        'model_state_dict': model.state_dict(),
+                        'optimizer_state_dict': optimizer.state_dict(),
+                        'epoch': epoch,
+                        'loss': best_val_loss,
+                        'fold': fold
+                    }
+                    save_checkpoint(
+                        model, optimizer, epoch, best_val_loss, fold,
+                        config['classes'], config['save_dir']
+                    )
+                else:
+                    patience_counter += 1
+                    if patience_counter >= config.get('early_stopping_patience', 5):
+                        logging.info("Early stopping triggered")
+                        break
+                        
+                training_history.append({
                     'epoch': epoch,
-                    'fold': fold,
-                }, f'model_fold_{fold + 1}_best.pth')
+                    'train_metrics': train_metrics,
+                    'val_metrics': val_metrics
+                })
+                
+            except Exception as e:
+                logging.error(f"Error in training loop: {e}")
+                raise
+            
+        return val_metrics, best_state
 
-        if best_model_wts is not None:
-            model.load_state_dict(best_model_wts)
-        fold_results[f"Fold {fold + 1}"] = run_epoch(model, val_loader, criterion, optimizer, device, phase="validate")
+    try:
+        if mode == TrainingMode.SIMPLE:
+            # Create train/val split
+            train_size = int(0.8 * len(dataset))
+            val_size = len(dataset) - train_size
+            train_dataset, val_dataset = torch.utils.data.random_split(
+                dataset, [train_size, val_size],
+                generator=torch.Generator().manual_seed(42)  # Add seed for reproducibility
+            )
+            
+            train_loader = torch.utils.data.DataLoader(
+                train_dataset, 
+                batch_size=config['batch_size'],
+                shuffle=True,
+                num_workers=4,
+                pin_memory=True
+            )
+            val_loader = torch.utils.data.DataLoader(
+                val_dataset,
+                batch_size=config['batch_size'],
+                shuffle=False,
+                num_workers=4,
+                pin_memory=True
+            )
+            
+            model, criterion, optimizer, _ = model_fn()
+            return _train_loop(model, train_loader, val_loader, criterion, optimizer)
+            
+        elif mode == TrainingMode.KFOLD:
+            kfold = StratifiedKFold(n_splits=config.get('n_splits', 5), shuffle=True, random_state=42)
+            results = []
+            best_fold_metrics = float('inf')
+            best_fold_state = None
+            
+            # Get numeric labels for stratification
+            if hasattr(dataset, 'numeric_labels'):
+                numeric_labels = dataset.numeric_labels
+            else:
+                numeric_labels = [dataset.label_to_idx[label] for label in dataset.labels]
+            
+            for fold, (train_idx, val_idx) in enumerate(kfold.split(dataset.file_paths, numeric_labels)):
+                logging.info(f"Fold {fold+1}/{config['n_splits']}")
+                
+                train_subset = torch.utils.data.Subset(dataset, train_idx)
+                val_subset = torch.utils.data.Subset(dataset, val_idx)
+                
+                train_loader = DataLoader(
+                    train_subset, 
+                    batch_size=config['batch_size'], 
+                    shuffle=True,
+                    num_workers=4,
+                    pin_memory=True
+                )
+                val_loader = DataLoader(
+                    val_subset,
+                    batch_size=config['batch_size'], 
+                    shuffle=False,
+                    num_workers=4,
+                    pin_memory=True
+                )
 
-    return fold_results
-
-def log_kfold_results(results):
-    """
-    Logs the results of k-fold cross-validation.
-
-    Args:
-        results (dict): Dictionary of fold-wise metrics.
-    """
-    logging.info("Cross-validation completed. Summary of metrics:")
-    for fold, metrics in results.items():
-        logging.info(
-            f"{fold}: Loss = {metrics['loss']:.4f}, "
-            f"Accuracy = {metrics['accuracy']:.4f}, Precision = {metrics['precision']:.4f}, "
-            f"Recall = {metrics['recall']:.4f}, F1-Score = {metrics['f1_score']:.4f}"
-        )
+                model, criterion, optimizer, _ = model_fn()
+                metrics, state = _train_loop(model, train_loader, val_loader, 
+                                           criterion, optimizer, fold)
+                
+                results.append({**metrics, 'fold': fold})
+                
+                if metrics['loss'] < best_fold_metrics:
+                    best_fold_metrics = metrics['loss']
+                    best_fold_state = state
+                    
+            return results, best_fold_state
+        
+        else:
+            raise ValueError(f"Unknown training mode: {mode}")
+            
+    except Exception as e:
+        logging.error(f"Error in train_model: {e}")
+        raise
