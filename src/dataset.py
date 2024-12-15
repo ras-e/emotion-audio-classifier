@@ -54,7 +54,7 @@ class MFCCDataset(Dataset):
 
     @staticmethod
     def prepare_data(data_dir):
-        """Prepare data using only emotion labels."""
+        """Prepare data using emotion labels."""
         file_paths, labels = MFCCDataset._collect_file_paths_and_labels(data_dir)
         valid_file_paths, valid_labels = MFCCDataset._validate_samples(file_paths, labels)
         classes = sorted(set(valid_labels))
@@ -62,7 +62,7 @@ class MFCCDataset(Dataset):
 
     @staticmethod
     def _collect_file_paths_and_labels(data_dir):
-        """Collect file paths and labels."""
+        """Get file paths and labels."""
         file_paths = []
         labels = []
         min_samples_per_class = float('inf')
@@ -168,41 +168,39 @@ class MFCCDataset(Dataset):
         
         return valid_file_paths, valid_labels
 
+# Compute class weights proportional to class frequencies
     @staticmethod
     def compute_class_weights(labels, classes):
-
         label_counts = Counter(labels)
-        total_samples = len(labels)
-        class_weights = {}
-        
-        for class_name in classes:
-            count = label_counts.get(class_name, 0)
-            if count == 0:
-                class_weights[class_name] = 1.0  # Handle missing classes
+        total_samples = sum(label_counts.values())
+        class_weights = []
+        for cls in classes:
+            count = label_counts.get(cls, 0)
+            if count > 0:
+                weight = total_samples / (len(classes) * count)
             else:
-                class_weights[class_name] = total_samples / (len(classes) * count)
-        
+                weight = 0.0  # Assign zero weight if no samples for the class
+            class_weights.append(weight)
         return class_weights
 
     @staticmethod
-    def split_train_test(dataset_dir, test_size=0.2, n_splits=5):
+    def split_train_test(dataset_dir, test_size=0.2, n_splits=1):
         """Split dataset into train and test sets using emotion labels."""
         paths, labels, classes = MFCCDataset.prepare_data(dataset_dir)
         
-        # Convert composite labels to numeric for stratification
+        # Convert labels to numeric for stratification (string labels can cause issues)
         label_to_idx = {label: idx for idx, label in enumerate(classes)}
         numeric_labels = [label_to_idx[label] for label in labels]
         
-        # Perform train-test split first
+        # Perform train-test split with stratification if kfold true
         train_paths, test_paths, train_labels, test_labels = train_test_split(
             paths, labels, test_size=test_size, random_state=42, stratify=labels
         )
         
-        # Then set up cross-validation folds if needed
+        # Set up cross-validation folds if true
         if n_splits > 1:
             skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
-            folds = list(skf.split([path for path in train_paths], 
-                                 [label_to_idx[label] for label in train_labels]))
+            folds = list(skf.split(train_paths, [label_to_idx[label] for label in train_labels]))
         else:
             folds = None
         
@@ -224,8 +222,6 @@ class MFCCDataset(Dataset):
     def _log_class_distribution(labels, classes, split_name):
         """
         Log class distribution for a specific dataset split.
-
-
         """
         composite_labels = [classes[label] for label in labels]
         class_distribution = Counter(composite_labels)
@@ -261,5 +257,4 @@ if __name__ == "__main__":
 
     logging.info(f"Number of classes: {len(classes)}")
     logging.info(f"Test set size: {len(test_paths)}")
-    for fold_idx, (train_indices, val_indices) in enumerate(folds):
-        logging.info(f"Fold {fold_idx + 1}: Train samples = {len(train_indices)}, Validation samples = {len(val_indices)}")
+    for fold_idx, (train_indices, val_indices) in enumerate(folds):        logging.info(f"Fold {fold_idx + 1}: Train samples = {len(train_indices)}, Validation samples = {len(val_indices)}")

@@ -18,3 +18,5 @@ model_fold_*
 /datasplit
 /deprecated
 /dataset/zips
+/saved_models
+/preprocessed_old
