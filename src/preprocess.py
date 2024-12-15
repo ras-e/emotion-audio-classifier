@@ -30,24 +30,32 @@ def pitch_shift(audio, sr, n_steps=0):
     return librosa.effects.pitch_shift(audio, sr=sr, n_steps=n_steps)
 
 def augment_audio(audio, sr):
-    """More robust augmentation pipeline"""
-    augmentations = [
-        lambda x: add_noise(x, noise_level=np.random.uniform(0.001, 0.01)),
-        lambda x: time_stretch(x, rate=np.random.uniform(0.8, 1.2)),
-        lambda x: pitch_shift(x, sr=sr, n_steps=np.random.randint(-4, 4)),
-        lambda x: librosa.effects.harmonic(x),
-        lambda x: librosa.effects.percussive(x)
-    ]
-    for aug in augmentations:
-        if np.random.random() < 0.5:
-            audio = aug(audio)
-    return audio
+    """Apply a series of augmentations to the audio signal."""
+    augment_functions = []
+    if np.random.rand() < 0.5:
+        noise_level = np.random.uniform(0.001, 0.01)
+        audio = add_noise(audio, noise_level=noise_level)
+        augment_functions.append(f"Add Noise (level={noise_level:.3f})")  # Augmentation 1
+    if np.random.rand() < 0.5:
+        rate = np.random.uniform(0.8, 1.2)
+        audio = time_stretch(audio, rate=rate)
+        augment_functions.append(f"Time Stretch (rate={rate:.2f})")  # Augmentation 2
+    if np.random.rand() < 0.5:
+        n_steps = np.random.randint(-4, 4)
+        audio = pitch_shift(audio, sr=sr, n_steps=n_steps)
+        augment_functions.append(f"Pitch Shift (steps={n_steps})")  # Augmentation 3
+    if np.random.rand() < 0.3:
+        audio = librosa.effects.harmonic(audio)
+        augment_functions.append("Harmonic")  # Augmentation 4
+    if np.random.rand() < 0.3:
+        audio = librosa.effects.percussive(audio)
+        augment_functions.append("Percussive")  # Augmentation 5
+    augmentation_description = ', '.join(augment_functions) if augment_functions else "No Augmentation"
+    return audio, augmentation_description
 
+# Pad or truncate MFCC features to a fixed length.
+# Used during preprocessing to ensure consistent feature dimensions.
 def pad_or_truncate(mfcc, max_length=100):
-    """
-    Pad or truncate MFCC features to a fixed length.
-    Used during preprocessing to ensure consistent feature dimensions.
-    """
     try:
         if mfcc.shape[1] > max_length:
             return mfcc[:, :max_length]  # Truncate
@@ -58,9 +66,8 @@ def pad_or_truncate(mfcc, max_length=100):
     except Exception as e:
         logging.error(f"Error in padding or truncating MFCC: {e}")
         return mfcc
-
+# Extract multiple audio features
 def extract_enhanced_features(audio, sr, use_mfcc=True):
-    """Extract multiple audio features"""
     features = []
     
     # MFCC with delta features
@@ -119,25 +126,14 @@ class AudioPreprocessor:
             return False, str(e)
 
     def create_augmented_samples(self, audio, num_augmentations=5):
-        """Create multiple augmented versions of an audio sample"""
-        augmented_samples = [audio]
-        
+        """Create augmented versions of an audio sample."""
+        augmented_samples = [{'audio': audio, 'augmentations': 'Original'}]
         for _ in range(num_augmentations):
-            aug_audio = audio.copy()
-            if np.random.random() < 0.7:
-                aug_audio = add_noise(aug_audio, noise_level=np.random.uniform(0.001, 0.02))
-            if np.random.random() < 0.7:
-                aug_audio = time_stretch(aug_audio, rate=np.random.uniform(0.8, 1.3))
-            if np.random.random() < 0.7:
-                aug_audio = pitch_shift(aug_audio, sr=self.sr, n_steps=np.random.randint(-4, 5))
-            if np.random.random() < 0.3:
-                aug_audio = librosa.effects.harmonic(aug_audio)
-            
-            augmented_samples.append(aug_audio)
-        
+            aug_audio, aug_desc = augment_audio(audio, sr=self.sr)
+            augmented_samples.append({'audio': aug_audio, 'augmentations': aug_desc})
         return augmented_samples
 
-    def process_single_file(self, file_path, output_path=None, plot=False, augment=True):
+    def process_single_file(self, file_path, output_path=None, plot=False, plot_dir=None, augment=True):
         """Process a single audio file and optionally save"""
         try:
             # Load raw audio
@@ -158,39 +154,45 @@ class AudioPreprocessor:
             if augment:
                 audio_samples = self.create_augmented_samples(audio)
             else:
-                audio_samples = [audio]
+                audio_samples = [{'audio': audio, 'augmentations': 'Original'}]
             
             # Process all versions
             processed_samples = []
-            for idx, audio_sample in enumerate(audio_samples):
-                # Extract features for training (1D)
+            for idx, sample in enumerate(audio_samples):
+                audio_sample = sample['audio']
+                augmentations_applied = sample['augmentations']
+                
+                # Extract features
                 features = self.extract_mfcc(audio_sample)
-                # Extract features for plotting (2D)
-                if idx == 0 and plot:
+                
+                # Plotting
+                if plot and plot_dir:
                     mfcc_for_plot = librosa.feature.mfcc(y=audio_sample, sr=self.sr, n_mfcc=self.n_mfcc)
-                    # Normalize for plotting
                     mfcc_for_plot = (mfcc_for_plot - np.mean(mfcc_for_plot)) / (np.std(mfcc_for_plot) + 1e-8)
+                    plot_features(
+                        audio_sample,
+                        mfcc_for_plot,
+                        file_path,
+                        self.sr,
+                        raw_audio=raw_audio,  # Always pass raw_audio
+                        save_dir=plot_dir,
+                        augmentations=augmentations_applied  # Pass augmentations here
+                    )
 
-                # Ensure consistent feature dimensions for training
-                features = features.flatten()
-                # ...existing code to pad or truncate features if necessary...
-
-                if output_path and idx >= 0:
+                # Save features
+                if output_path:
                     base_path = os.path.splitext(output_path)[0]
                     final_path = generate_output_filename(base_path, idx)
                     os.makedirs(os.path.dirname(final_path), exist_ok=True)
                     np.save(final_path, features.astype(np.float32))
-                    logging.info(f"Saved {'augmented' if idx > 0 else 'original'} features to {final_path}")
-                
+                    logging.info(f"Saved {'augmented' if idx > 0 else 'original'} features to {final_path} with augmentations: {augmentations_applied}")
+                    
                 processed_samples.append(features)
-            
-            if plot:
-                # Use the first sample's MFCC features for plotting
-                plot_features(audio, mfcc_for_plot, file_path, self.sr, raw_audio=raw_audio)
                 
             return True, processed_samples
-            
+                
         except Exception as e:
+            logging.error(f"Error processing file {file_path}: {e}")
             return False, str(e)
 
     def extract_mfcc(self, audio):
@@ -201,17 +203,7 @@ class AudioPreprocessor:
         return mfccs
 
 def test_preprocessing(input_dir, config):
-    """
-    Test preprocessing on a small subset of files
-    
-    Args:
-        input_dir (str): Directory containing audio files
-        config (dict): Configuration dictionary containing:
-            - n_samples (int): Number of files to test per emotion
-            - plot_emotion (str, optional): Emotion to plot example for
-            - augment (bool): Whether to apply augmentation
-            - use_enhanced_features (bool): Whether to use enhanced features
-    """
+    """ Test preprocessing on a small subset of files """
     output_dir = config.get('output_dir', './preprocessed_test')  # Add default test output directory
     preprocessor = AudioPreprocessor(
         use_enhanced_features=config.get('use_enhanced_features', False)
@@ -228,15 +220,21 @@ def test_preprocessing(input_dir, config):
     plot_emotion = config.get('plot_emotion', None)
     
     logging.info(f"Testing preprocessing on {n_samples} samples per emotion...")
+    logging.debug(f"Input directory: {input_dir}")
+    
+    if not os.path.exists(input_dir):
+        logging.error(f"Input directory does not exist: {input_dir}")
+        return results
     
     for emotion_dir in os.listdir(input_dir):
         emotion_path = os.path.join(input_dir, emotion_dir)
         if not os.path.isdir(emotion_path):
             continue
             
-        files = [f for f in os.listdir(emotion_path) if f.endswith('.wav')][:n_samples]
+        files = [f for f in os.listdir(emotion_path) if f.endswith('.wav')]
+        logging.debug(f"Found {len(files)} files in {emotion_path}")
         
-        for file in files:
+        for file in files[:n_samples]:
             file_path = os.path.join(emotion_path, file)
             # Create output path maintaining directory structure
             relative_path = os.path.relpath(file_path, input_dir)
@@ -306,15 +304,24 @@ def preprocess_and_save_all(input_dir, output_dir, config=None):
     plot_done = False
     
     logging.info("Starting preprocessing...")
+    logging.debug(f"Input directory: {input_dir}")
+    
+    if not os.path.exists(input_dir):
+        logging.error(f"Input directory does not exist: {input_dir}")
+        return processed_count, skipped_count
+    
     os.makedirs(output_dir, exist_ok=True)
     
     for root, _, files in os.walk(input_dir):
         emotion = os.path.basename(root)
+        logging.debug(f"Processing directory: {root} with emotion: {emotion}")
+        
         for file in files:
             if not file.endswith('.wav'):
                 continue
                 
             file_path = os.path.join(root, file)
+            logging.debug(f"Found file: {file_path}")
             out_path = os.path.join(
                 output_dir, 
                 emotion, 
@@ -374,7 +381,7 @@ def main():
     parser = argparse.ArgumentParser(description='Audio preprocessing script')
     parser.add_argument('--input_dir', default='./dataset/emotions', help='Input directory')
     parser.add_argument('--output_dir', default='./preprocessed', help='Output directory')
-    parser.add_argument('--mode', choices=['test', 'process'], required=True, 
+    parser.add_argument('--mode', choices=['test', 'process'], default='process', 
                       help='Mode: test (for testing few samples) or process (for processing all files)')
     parser.add_argument('--plot_emotion', type=str, help='Emotion to plot example for')
     parser.add_argument('--n_samples', type=int, default=5, help='Number of test samples per emotion')
