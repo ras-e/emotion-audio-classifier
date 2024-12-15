@@ -1,4 +1,5 @@
 import os
+import sys
 import logging
 from flask import Flask, request, render_template
 from werkzeug.utils import secure_filename
@@ -10,21 +11,24 @@ import matplotlib.pyplot as plt
 import librosa.display
 import glob
 
-from src.preprocess import preprocess_audio, extract_mfcc
-from deprecated.model_testing import initialize_model
+# Add the src directory to the Python path
+sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
+
+from preprocess import AudioPreprocessor
+from model import initialize_model
 
 app = Flask(__name__)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-classes = ['angry', 'calm', 'disgust', 'fearful', 'happy', 'neutral', 'sad', 'surprised'] # Hardcoded classes, will add functionality to retrieve later
+classes = ['angry', 'calm', 'disgust', 'fearful', 'happy', 'neutral', 'sad', 'surprised']  # Refactor to parameter later
 
 # Configure device and model
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 num_classes = 8  # Number of emotions
 model = initialize_model(num_classes, device)
-model_path = os.path.join(os.path.dirname(__file__), 'best_model.pth')
+model_path = os.path.join(os.path.dirname(__file__), 'model', 'best_model.pth')  # Path to the trained model, /model
 checkpoint = torch.load(model_path, map_location=device)
 model.load_state_dict(checkpoint['model_state_dict'])
 model.eval()
@@ -74,19 +78,24 @@ def upload_file():
                 file.save(filepath)
                 
                 # Process audio and generate plots
-                audio = preprocess_audio(filepath, plot_dir=plots_dir)
-                mfcc = extract_mfcc(audio)
+                preprocessor = AudioPreprocessor()
+                success, processed_samples = preprocessor.process_single_file(
+                    filepath, plot=True, plot_dir=plots_dir, augment=True  # Use augment=False for clarity
+                )
+                if not success:
+                    return render_template('index.html', error='Error processing audio file')
                 
-                # Update plot paths with verification
+                mfcc = processed_samples[0]  # Use the first sample (original, not augmented)
+                
+                # Update plot paths
                 base_filename = os.path.splitext(filename)[0]
-                for plot_type in ['waveform', 'mfcc']:
-                    plot_file = f"{base_filename}_{plot_type}.png"
-                    full_plot_path = os.path.join(plots_dir, plot_file)
-                    if os.path.isfile(full_plot_path):
-                        plot_paths.append(f"plots/{plot_file}")
-                        logging.info(f"Verified plot file: {full_plot_path}")
-                    else:
-                        logging.error(f"Plot file not found: {full_plot_path}")
+                plot_file = f"{base_filename}_features.png"
+                full_plot_path = os.path.join(plots_dir, plot_file)
+                if os.path.isfile(full_plot_path):
+                    plot_paths.append(f"plots/{plot_file}")
+                    logging.info(f"Verified plot file: {full_plot_path}")
+                else:
+                    logging.error(f"Plot file not found: {full_plot_path}")
                 
                 # Make prediction
                 input_tensor = torch.tensor(mfcc, dtype=torch.float32).unsqueeze(0).to(device)

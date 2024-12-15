@@ -83,14 +83,14 @@
         </div>
         {% if plot_paths %}
         <div class="plots">
-            <h2>Preprocessing Graphs:</h2>
-            {% for plot in plot_paths %}
-                <img src="{{ url_for('static', filename=plot) }}" alt="Preprocessing Plot">
+            <h2>Audio Analysis Plots:</h2>
+            {% for plot_path in plot_paths %}
+                <img src="{{ url_for('static', filename=plot_path) }}" alt="Audio Plot" style="max-width: 100%;">
             {% endfor %}
         </div>
         {% else %}
         <div class="plots hidden">
-            <h2>Preprocessing Graphs:</h2>
+            <h2>Audio Analysis Plots:</h2>
         </div>
         {% endif %}
     </div>

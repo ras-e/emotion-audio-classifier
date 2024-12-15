@@ -32,69 +32,45 @@ def calculate_metrics(all_labels, all_preds):
     return {"accuracy": accuracy, "precision": precision, "recall": recall, "f1_score": f1}
 
 # Plot raw waveform, processed waveform, and MFCC features
-def plot_features(audio, mfcc, file_path, sr=16000, save_dir=None, raw_audio=None):
-    if raw_audio is not None:
-        fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 12))
-        
-        # Plot raw waveform
-        librosa.display.waveshow(raw_audio, sr=sr, ax=ax1)
-        ax1.set_title("Raw Waveform")
-        ax1.set_xlabel("Time")
-        ax1.set_ylabel("Amplitude")
-        
-        # Plot processed waveform
-        librosa.display.waveshow(audio, sr=sr, ax=ax2)
-        ax2.set_title("Processed Waveform")
-        ax2.set_xlabel("Time")
-        ax2.set_ylabel("Amplitude")
-        
-        # Plot MFCC
-        img = librosa.display.specshow(
-            mfcc,
-            x_axis='time',
-            y_axis='mel',
-            sr=sr,
-            ax=ax3,
-            cmap='viridis'
-        )
-        ax3.set_title("MFCC Features")
-        ax3.set_xlabel("Time")
-        ax3.set_ylabel("MFCC Coefficients")
-        fig.colorbar(img, ax=ax3, format='%+2.0f dB')
-    else:
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8))
-        
-        # Plot waveform
-        librosa.display.waveshow(audio, sr=sr, ax=ax1)
-        ax1.set_title("Processed Waveform")
-        ax1.set_xlabel("Time")
-        ax1.set_ylabel("Amplitude")
-        
-        # Plot MFCC
-        if len(mfcc.shape) == 1:
-            # For 1D array, reshape to 2D
-            n_mfcc = mfcc.shape[0]
-            mfcc = mfcc.reshape(1, n_mfcc)
-        img = librosa.display.specshow(
-            mfcc,
-            x_axis='time',
-            y_axis='mel',
-            sr=sr,
-            ax=ax2,
-            cmap='viridis'
-        )
-        ax2.set_title("MFCC Features")
-        ax2.set_xlabel("Time")
-        ax2.set_ylabel("MFCC Coefficients")
-        fig.colorbar(img, ax=ax2, format='%+2.0f dB')
+def plot_features(audio, mfcc, file_path, sr=16000, save_dir=None, raw_audio=None, augmentations=''):
+    fig, axes = plt.subplots(3, 1, figsize=(16, 16))  # Increase figure size
     
-    plt.tight_layout()
+    if raw_audio is not None:
+        # Plot raw waveform
+        librosa.display.waveshow(raw_audio, sr=sr, ax=axes[0])
+        axes[0].set_title("Raw Waveform", fontsize=18)
+        axes[0].set_xlabel("Time", fontsize=14)
+        axes[0].set_ylabel("Amplitude", fontsize=14)
+    
+    # Plot processed waveform
+    librosa.display.waveshow(audio, sr=sr, ax=axes[1])
+    axes[1].set_title("Processed Waveform", fontsize=18)
+    axes[1].set_xlabel("Time", fontsize=14)
+    axes[1].set_ylabel("Amplitude", fontsize=14)
+    
+    # Plot MFCC
+    img = librosa.display.specshow(
+        mfcc,
+        x_axis='time',
+        y_axis='mel',
+        sr=sr,
+        ax=axes[2],
+        cmap='viridis'
+    )
+    axes[2].set_title("MFCC Features", fontsize=18)
+    axes[2].set_xlabel("Time", fontsize=14)
+    axes[2].set_ylabel("MFCC Coefficients", fontsize=14)
+    fig.colorbar(img, ax=axes[2], format='%+2.0f dB')
+    
+    # Add augmentation descriptions above the plot with larger font size
+    fig.suptitle(f"Augmentations Applied: {augmentations}", fontsize=22)
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95])  # Adjust layout to fit the suptitle
     
     if save_dir:
         os.makedirs(save_dir, exist_ok=True)
         base_filename = os.path.basename(os.path.splitext(file_path)[0])
         save_path = os.path.join(save_dir, f"{base_filename}_features.png")
-        plt.savefig(save_path)
+        plt.savefig(save_path, bbox_inches='tight')  # Ensure full plot is saved
         logging.info(f"Saved features plot to {save_path}")
     else:
         plt.show()
