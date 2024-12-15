@@ -1,12 +1,14 @@
 import os
 import torch
 import logging
+import random
+import numpy as np
 from torch.utils.data import DataLoader
 from src.dataset import MFCCDataset, get_data_transforms
-from src.train import TrainingMode, train_model  # Remove run_cross_validation
+from src.train import TrainingMode, train_model
 from src.model import initialize_model, initialize_criterion, initialize_optimizer
 from src.evaluation import evaluate_model
-from src.utils import setup_logging
+from src.utils import setup_logging  # Updated import
 
 def initialize_model_fn(classes, device, config, class_weights_tensor):
     """Factory function for model initialization."""
@@ -21,14 +23,23 @@ def initialize_model_fn(classes, device, config, class_weights_tensor):
         return model, criterion, optimizer, None
     return init_fn
 
+def setup_seed(seed):
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
 def main():
     # Configuration
     config = {
         'dataset_dir': "./preprocessed",
         'save_dir': "./model",
         'batch_size': 32,
-        'num_epochs': 1, 
-        'n_splits': 2,
+        'num_epochs': 50, 
+        'n_splits': 1,  # Set to 2 for k-fold cross-validation
         'test_split_ratio': 0.2,
         'learning_rate': 0.001,
         'weight_decay': 1e-4,
@@ -39,11 +50,12 @@ def main():
 
     # Setup
     setup_logging()
+    setup_seed(42)  # Set the global seed here
     os.makedirs(config['save_dir'], exist_ok=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     # Load and prepare data
-    train_paths, train_labels, test_paths, test_labels, classes, _ = MFCCDataset.split_train_test(
+    train_paths, train_labels, test_paths, test_labels, classes, folds = MFCCDataset.split_train_test(
         config['dataset_dir'], 
         test_size=config['test_split_ratio'],
         n_splits=config['n_splits'] if config['training_mode'] == TrainingMode.KFOLD else 1
@@ -55,13 +67,21 @@ def main():
     train_dataset = MFCCDataset(train_paths, train_labels, classes, transform=get_data_transforms())
     test_dataset = MFCCDataset(test_paths, test_labels, classes, transform=get_data_transforms())
 
-    # Determine number of workers
-    if torch.backends.mps.is_available():
-        num_workers = 0  # Multiprocessing not supported with MPS
+    # Determine device (GPU or CPU, mps == ARM)
+    device = torch.device("cuda" if torch.cuda.is_available() else
+                          "mps" if torch.backends.mps.is_available() else
+                          "cpu")
+
+    # Configure DataLoader settings based on device
+    if device.type == 'cuda':
+        num_workers = os.cpu_count()
+        pin_memory = True
+    elif device.type == 'mps':
+        num_workers = 0  # Multiprocessing not supported with MPS backend
         pin_memory = False
     else:
         num_workers = os.cpu_count()
-        pin_memory = True
+        pin_memory = False
 
     # Data loaders with multiprocessing
     train_loader = DataLoader(
@@ -81,11 +101,9 @@ def main():
 
     # Prepare class weights using the updated method
     class_weights = MFCCDataset.compute_class_weights(train_labels, classes)
-    class_weights_tensor = torch.tensor([class_weights[label] for label in classes], 
-                                      device=device, dtype=torch.float32)
+    class_weights_tensor = torch.tensor(class_weights, device=device, dtype=torch.float32)
     
     # Log class weights for verification
-    # logging.info("Class weights:")
     for cls, weight in zip(classes, class_weights_tensor.cpu().numpy()):
         logging.info(f"{cls}: {weight:.4f}")
 

@@ -3,16 +3,17 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Subset
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import StratifiedKFold, StratifiedShuffleSplit, train_test_split
 import logging
 from enum import Enum, auto
 from typing import Dict, Any, Optional, Tuple
 import os
-from src.utils import save_checkpoint, calculate_metrics
+from src.utils import save_checkpoint, calculate_metrics  # Updated import
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
+# Training mode selection
 class TrainingMode(Enum):
     """Training mode selection"""
     SIMPLE = auto()
@@ -96,6 +97,7 @@ def train_model(
                         'loss': best_val_loss,
                         'fold': fold
                     }
+                    # Save the best model as best_model
                     save_checkpoint(
                         model, optimizer, epoch, best_val_loss, fold,
                         config['classes'], config['save_dir']
@@ -120,29 +122,32 @@ def train_model(
 
     try:
         if mode == TrainingMode.SIMPLE:
-            # Create train/val split
-            train_size = int(0.8 * len(dataset))
-            val_size = len(dataset) - train_size
-            train_dataset, val_dataset = torch.utils.data.random_split(
-                dataset, [train_size, val_size],
-                generator=torch.Generator().manual_seed(42)  # Add seed for reproducibility
+            # Get labels for stratification
+            labels = dataset.numeric_labels
+
+            # Perform train-test split with stratification
+            train_idx, val_idx = train_test_split(
+                range(len(labels)), test_size=0.2, random_state=42, stratify=labels
             )
-            
-            train_loader = torch.utils.data.DataLoader(
-                train_dataset, 
+
+            train_subset = Subset(dataset, train_idx)
+            val_subset = Subset(dataset, val_idx)
+
+            train_loader = DataLoader(
+                train_subset,
                 batch_size=config['batch_size'],
                 shuffle=True,
                 num_workers=4,
                 pin_memory=True
             )
-            val_loader = torch.utils.data.DataLoader(
-                val_dataset,
+            val_loader = DataLoader(
+                val_subset,
                 batch_size=config['batch_size'],
                 shuffle=False,
                 num_workers=4,
                 pin_memory=True
             )
-            
+
             model, criterion, optimizer, _ = model_fn()
             return _train_loop(model, train_loader, val_loader, criterion, optimizer)
             

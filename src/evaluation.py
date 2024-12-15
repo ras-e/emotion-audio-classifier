@@ -33,17 +33,16 @@ def evaluate_model(model, dataloader, device, classes, save_dir="./plots_results
     logging.info(f"Unique labels in test set: {unique_labels}")
     logging.info(f"Unique predictions: {unique_preds}")
 
-    # Filter classes to only include those present in the test set
-    present_classes = sorted(list(set([classes[i] for i in unique_labels])))
-    logging.info(f"Classes present in test set: {present_classes}")
+    # Use the full classes list without filtering
+    present_classes = classes  # Use the original classes list
 
     # Calculate metrics
     try:
         report = classification_report(
             all_labels,
             all_preds,
-            labels=range(len(present_classes)),  # Use indices
-            target_names=present_classes,        # Use present classes
+            labels=range(len(classes)),  # Use indices
+            target_names=classes,        # Use original classes
             output_dict=True,
             zero_division=0
         )
@@ -51,18 +50,22 @@ def evaluate_model(model, dataloader, device, classes, save_dir="./plots_results
         print("Classification Report:")
         print(classification_report(
             all_labels, all_preds,
-            labels=range(len(present_classes)),
-            target_names=present_classes,
+            labels=range(len(classes)),
+            target_names=classes,
             zero_division=0
         ))
 
-        # Generate confusion matrix
-        cm = confusion_matrix(all_labels, all_preds, labels=range(len(present_classes)))
+        # Generate confusion matrix using all classes
+        cm = confusion_matrix(
+            all_labels,
+            all_preds,
+            labels=range(len(classes))
+        )
 
         # Save plots
         os.makedirs(save_dir, exist_ok=True)
         save_plot(plot_confusion_matrix, save_dir, "confusion_matrix.png",
-                 cm=cm, class_names=present_classes)
+                 cm=cm, class_names=classes)
 
         # Calculate ROC curves only for present classes
         roc_auc = plot_roc_curves(all_labels, all_preds, present_classes, save_dir)
@@ -103,7 +106,7 @@ def plot_confusion_matrix(cm, class_names):
     plt.xlabel("Predicted")
     plt.ylabel("True")
 
-
+# ROC dependent on use case - can be deleted
 def plot_roc_curves(all_labels, all_preds, class_names, save_dir):
     """
     Plot ROC curves and calculate AUC for each class.
