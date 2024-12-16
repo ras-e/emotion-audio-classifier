@@ -9,6 +9,8 @@ Multimedia Course, Final Exam, on Department of Electrical and Computer Engineer
 
 ## How to run:
 
+Required:
+
 Manually run: 
 - organize_dataset.py : This will unzip the used datasets, extract and organize into a labeled emotion folder.
 - preprocess.py
@@ -17,7 +19,14 @@ Preprocess args can be found in the preprocess.py main method. However, this is 
 ```
 python src/preprocess.py --mode process --augment --use_enhanced_features
 ```
+
+Optional:
+
 - Run the main.py file to train the model (Parameters can be modified in main.py to either kfold, or a 80, 20 split)
+
+Required:
+
+This will use the model saved in /model . A pre-trained model is comitted to the repository with a 77% accuracy.
 - Run the UI for an interface to submit a .wav audio sample and visualize plots
 
 
