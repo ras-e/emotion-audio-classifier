@@ -12,14 +12,11 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 
 
 class MFCCDataset(Dataset):
-    """
-    Adjusted to load spectrograms instead of MFCCs.
-    """
     def __init__(self, file_paths, labels, classes, transform=None):
         self.file_paths = file_paths
         self.labels = labels
         self.classes = classes
-        self.transform = transform  # Uses custom transform from main_complex.py
+        self.transform = transform # has to be removed
         self.label_to_idx = {label: idx for idx, label in enumerate(classes)}
         self.numeric_labels = [self.label_to_idx[label] for label in labels]
 

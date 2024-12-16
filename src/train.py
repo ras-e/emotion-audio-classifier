@@ -2,13 +2,11 @@ import copy
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Subset
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
-from sklearn.model_selection import StratifiedKFold, StratifiedShuffleSplit, train_test_split
+from sklearn.model_selection import StratifiedKFold, train_test_split
 import logging
 from enum import Enum, auto
 from typing import Dict, Any, Optional, Tuple
-import os
-from src.utils import save_checkpoint, calculate_metrics  # Updated import
+from src.utils import save_checkpoint, calculate_metrics
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")

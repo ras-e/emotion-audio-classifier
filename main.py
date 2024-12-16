@@ -8,7 +8,7 @@ from src.dataset import MFCCDataset, get_data_transforms
 from src.train import TrainingMode, train_model
 from src.model import initialize_model, initialize_criterion, initialize_optimizer
 from src.evaluation import evaluate_model
-from src.utils import setup_logging  # Updated import
+from src.utils import setup_logging
 
 def initialize_model_fn(classes, device, config, class_weights_tensor):
     """Factory function for model initialization."""
