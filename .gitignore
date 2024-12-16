@@ -6,7 +6,6 @@ dataset/TESS
 dataset/emotions
 /preprocessed
 /preprocessed_test
-/plots_results
 /uploads
 /static
 model_fold_*
